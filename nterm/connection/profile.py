@@ -96,7 +96,7 @@ class AuthConfig:
         )
     
     @classmethod
-    def key_auth(
+    def key_file_auth(
         cls, 
         username: str, 
         key_path: str, 

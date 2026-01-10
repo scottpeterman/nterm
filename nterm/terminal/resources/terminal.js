@@ -249,36 +249,24 @@
      * Copy terminal selection to clipboard
      */
     function doCopy() {
-        if (!term.hasSelection()) {
-            return;
-        }
-
-        const selection = term.getSelection();
-
-        navigator.clipboard.writeText(selection).then(() => {
-            if (bridge) {
-                bridge.onSelectionCopied(selection);
-            }
-        }).catch(err => {
-            console.error('Copy failed:', err);
-        });
+    if (!term.hasSelection()) {
+        return;
     }
-
+    const selection = term.getSelection();
+    // Let Python handle clipboard - more reliable in QWebEngineView
+    if (bridge) {
+        bridge.onSelectionCopied(selection);
+    }
+}
     /**
      * Paste from clipboard (routes through Python for multiline check)
      */
     function doPaste() {
-        navigator.clipboard.readText().then(text => {
-            if (!text) return;
-
-            // Send to Python for multiline safety check
-            if (bridge) {
-                bridge.onPasteRequested(btoa(unescape(encodeURIComponent(text))));
-            }
-        }).catch(err => {
-            console.error('Paste failed:', err);
-        });
+    // Let Python handle clipboard read - more reliable in QWebEngineView
+    if (bridge) {
+        bridge.onPasteRequested('');
     }
+}
 
     /**
      * Set up bridge to Python via QWebChannel

@@ -319,36 +319,18 @@ class TerminalWidget(QWidget):
 
     @pyqtSlot(str)
     def _on_selection_copied(self, text: str):
-        """Selection was copied to clipboard."""
+        """Selection was copied - write to clipboard."""
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
         logger.debug(f"Copied {len(text)} chars to clipboard")
 
     @pyqtSlot(str)
     def _on_paste_requested(self, data_b64: str):
         """
         JS requested paste (from context menu or keyboard).
-        Route through our paste() method for multiline check.
+        Route through our paste() method which reads Qt clipboard.
         """
-        # The JS side read the clipboard - decode and process
-        try:
-            data = base64.b64decode(data_b64)
-            text = data.decode('utf-8', errors='replace')
-
-            line_count = text.count('\n')
-
-            if line_count > self._multiline_threshold:
-                self._pending_paste = data
-
-                lines = text.split('\n')
-                preview_lines = lines[:5]
-                preview = '\n'.join(preview_lines)
-                if len(lines) > 5:
-                    preview += f'\n... ({len(lines) - 5} more lines)'
-
-                self._bridge.show_paste_confirm.emit(preview, len(lines))
-            else:
-                self._send_paste(data)
-        except Exception as e:
-            logger.error(f"Paste decode error: {e}")
+        self.paste()
 
     @pyqtSlot()
     def _on_paste_confirmed(self):
