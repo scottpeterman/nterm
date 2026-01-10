@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 import logging
 import yaml
+from nterm.resources import resources
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +342,8 @@ class ThemeEngine:
         Args:
             theme_dir: Directory to load custom themes from
         """
-        self.theme_dir = theme_dir or Path(__file__).parent / "themes"
+        self.theme_dir = theme_dir or resources.get_path("theme", "themes")
+
         self._themes: dict[str, Theme] = {}
         self._current: Optional[Theme] = None
 

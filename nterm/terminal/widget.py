@@ -24,7 +24,7 @@ from .bridge import TerminalBridge
 
 logger = logging.getLogger(__name__)
 
-RESOURCES = Path(__file__).parent / "resources"
+from nterm.resources import resources
 
 # Default threshold for multiline paste warning
 MULTILINE_PASTE_THRESHOLD = 1
@@ -100,11 +100,11 @@ class TerminalWidget(QWidget):
         self._bridge.paste_cancelled.connect(self._on_paste_cancelled)
 
         # Load terminal HTML
-        html_path = RESOURCES / "terminal.html"
-        if html_path.exists():
+        try:
+            html_path = resources.get_path("terminal", "resources", "terminal.html")
             self._webview.setUrl(QUrl.fromLocalFile(str(html_path)))
-        else:
-            logger.error(f"Terminal HTML not found: {html_path}")
+        except FileNotFoundError as e:
+            logger.error(f"Terminal HTML not found: {e}")
 
     def attach_session(self, session: Session) -> None:
         """

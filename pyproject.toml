@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nterm"
+version = "0.1.0"
+description = "Modern SSH terminal widget for PyQt6 with credential vault and jump host support"
+readme = "README.md"
+license = {text = "GPL-3.0"}
+authors = [{name = "Scott Peterman"}]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Networking",
+    "Topic :: Terminals :: Terminal Emulators/X Terminals",
+]
+keywords = ["ssh", "terminal", "pyqt6", "network", "automation"]
+
+dependencies = [
+    "PyQt6>=6.4.0",
+    "PyQt6-WebEngine>=6.4.0",
+    "paramiko>=3.0.0",
+    "cryptography>=41.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+keyring = ["keyring>=24.0.0"]
+dev = ["pytest", "black", "pyinstaller", "build", "twine"]
+
+[project.urls]
+Homepage = "https://github.com/scottpeterman/nterm"
+Repository = "https://github.com/scottpeterman/nterm"
+Issues = "https://github.com/scottpeterman/nterm/issues"
+
+[project.scripts]
+nterm = "nterm.__main__:main"
+
+[project.gui-scripts]
+nterm-gui = "nterm.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["nterm*"]
+
+[tool.setuptools.package-data]
+nterm = [
+    "terminal/resources/*.html",
+    "terminal/resources/*.js",
+    "terminal/resources/*.css",
+    "theme/themes/*.yaml",
+]
+```
+
+**`MANIFEST.in`:**
+```
+include LICENSE
+include README.md
+recursive-include nterm/terminal/resources *
+recursive-include nterm/theme/themes *.yaml
+prune nterm/examples
+prune screenshots
+global-exclude __pycache__
+global-exclude *.pyc

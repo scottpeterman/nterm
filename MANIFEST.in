@@ -1,0 +1,8 @@
+include LICENSE
+include README.md
+recursive-include nterm/terminal/resources *
+recursive-include nterm/theme/themes *.yaml
+prune nterm/examples
+prune screenshots
+global-exclude __pycache__
+global-exclude *.pyc

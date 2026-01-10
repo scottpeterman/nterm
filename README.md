@@ -6,7 +6,7 @@ PyQt6 terminal widget with encrypted credential vault, jump host chaining, YubiK
 
 Built for managing hundreds of devices through bastion hosts with hardware security keys.
 
-![nterm screenshot](screenshots/gruvbox.png)
+![nterm screenshot](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/gruvbox.png)
 
 ---
 
@@ -44,15 +44,29 @@ Built for managing hundreds of devices through bastion hosts with hardware secur
 
 | Gruvbox Hybrid Theme | Credential Manager |
 |---------------------|-------------------|
-| ![gruvbox](screenshots/gruvbox.png) | ![vault](screenshots/vault.png) |
+| ![gruvbox](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/gruvbox.png) | ![vault](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/vault.png) |
 
 | Connection Dialog | Multi-vendor Support |
 |------------------|---------------------|
-| ![connect](screenshots/connection_dialog.png) | ![neofetch](screenshots/neofetch.png) |
+| ![connect](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/connection_dialog.png) | ![neofetch](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/neofetch.png) |
 
 ---
 
 ## Installation
+
+### From PyPI
+
+```bash
+pip install nterm
+
+# Optional: system keychain support
+pip install nterm[keyring]
+
+# Run
+nterm
+```
+
+### From Source
 
 ```bash
 git clone https://github.com/scottpeterman/nterm.git
@@ -63,14 +77,16 @@ python -m venv .venv
 source .venv/bin/activate  # Linux/macOS
 # .venv\Scripts\activate   # Windows
 
-# Install dependencies
-pip install -r nterm/requirements.txt
+# Install in development mode
+pip install -e .
 
 # Optional: system keychain support
 pip install keyring
 
 # Run
-python nterm.py
+nterm
+# or
+python -m nterm
 ```
 
 ### Requirements
