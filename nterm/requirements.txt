@@ -1,0 +1,13 @@
+# Core dependencies
+PyQt6>=6.4.0
+PyQt6-WebEngine>=6.4.0
+paramiko>=3.0.0
+cryptography>=41.0.0
+PyYAML>=6.0
+
+# PTY handling (recommended for interactive SSH)
+pexpect>=4.8.0; sys_platform != 'win32'
+
+# Windows PTY support (for InteractiveSSHSession)
+pywinpty>=2.0.0; sys_platform == 'win32'
+
