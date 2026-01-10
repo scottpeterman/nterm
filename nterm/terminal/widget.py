@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QApplication
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
 from PyQt6.QtWebChannel import QWebChannel
@@ -26,22 +26,25 @@ logger = logging.getLogger(__name__)
 
 RESOURCES = Path(__file__).parent / "resources"
 
+# Default threshold for multiline paste warning
+MULTILINE_PASTE_THRESHOLD = 1
+
 
 class TerminalWidget(QWidget):
     """
     Themeable terminal widget.
-    
+
     Renders terminal via xterm.js in QWebEngineView.
     Connects to a Session for I/O.
     """
-    
+
     # Public signals
     session_state_changed = pyqtSignal(SessionState, str)
     interaction_required = pyqtSignal(str, str)  # prompt, type
     reconnect_requested = pyqtSignal()  # emitted when user wants to reconnect
     title_changed = pyqtSignal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, multiline_threshold: int = MULTILINE_PASTE_THRESHOLD):
         super().__init__(parent)
 
         self._session: Optional[Session] = None
@@ -49,6 +52,8 @@ class TerminalWidget(QWidget):
         self._ready = False
         self._pending_writes: list[bytes] = []
         self._awaiting_reconnect_confirm = False
+        self._multiline_threshold = multiline_threshold
+        self._pending_paste: Optional[bytes] = None  # held during confirmation
 
         self._setup_ui()
         self._setup_bridge()
@@ -88,6 +93,12 @@ class TerminalWidget(QWidget):
         self._bridge.terminal_ready.connect(self._on_terminal_ready)
         self._bridge.title_changed.connect(self.title_changed.emit)
 
+        # Clipboard signals
+        self._bridge.selection_copied.connect(self._on_selection_copied)
+        self._bridge.paste_requested.connect(self._on_paste_requested)
+        self._bridge.paste_confirmed.connect(self._on_paste_confirmed)
+        self._bridge.paste_cancelled.connect(self._on_paste_cancelled)
+
         # Load terminal HTML
         html_path = RESOURCES / "terminal.html"
         if html_path.exists():
@@ -106,6 +117,7 @@ class TerminalWidget(QWidget):
             self.detach_session()
 
         self._session = session
+        self._session.set_auto_reconnect(False)  # Widget controls reconnect
         self._session.set_event_handler(self._on_session_event)
         self._awaiting_reconnect_confirm = False
         logger.debug(f"Attached session")
@@ -162,20 +174,98 @@ class TerminalWidget(QWidget):
             self._bridge.focus_terminal.emit()
         self._webview.setFocus()
 
-    def show_overlay(self, message: str) -> None:
+    def show_overlay(self, message: str, show_spinner: bool = False) -> None:
         """
         Show overlay message.
 
         Args:
             message: Message to display
+            show_spinner: Whether to show the spinner animation
         """
         if self._ready:
-            self._bridge.show_overlay.emit(message)
+            self._bridge.show_overlay.emit(message, show_spinner)
 
     def hide_overlay(self) -> None:
         """Hide overlay message."""
         if self._ready:
             self._bridge.hide_overlay.emit()
+
+    # -------------------------------------------------------------------------
+    # Clipboard operations
+    # -------------------------------------------------------------------------
+
+    def copy(self) -> None:
+        """Copy current terminal selection to clipboard."""
+        if self._ready:
+            self._bridge.do_copy.emit()
+
+    def paste(self) -> None:
+        """
+        Paste from clipboard with multiline safety check.
+
+        If content contains more lines than threshold, shows confirmation dialog.
+        """
+        if not self._ready:
+            return
+
+        clipboard = QApplication.clipboard()
+        text = clipboard.text()
+
+        if not text:
+            return
+
+        # Count newlines
+        line_count = text.count('\n')
+
+        if line_count > self._multiline_threshold:
+            # Store pending paste and request confirmation
+            self._pending_paste = text.encode('utf-8')
+
+            # Create preview (first few lines)
+            lines = text.split('\n')
+            preview_lines = lines[:5]
+            preview = '\n'.join(preview_lines)
+            if len(lines) > 5:
+                preview += f'\n... ({len(lines) - 5} more lines)'
+
+            self._bridge.show_paste_confirm.emit(preview, len(lines))
+        else:
+            # Safe to paste directly
+            self._send_paste(text.encode('utf-8'))
+
+    def copy_paste(self) -> None:
+        """
+        Copy selection, then paste clipboard (combined operation).
+
+        Useful for workflows where you select text, then want to
+        immediately paste what was just copied.
+        """
+        self.copy()
+        # Small delay isn't needed since copy is sync to clipboard
+        self.paste()
+
+    def _send_paste(self, data: bytes) -> None:
+        """Actually send paste data to terminal/session."""
+        if self._session and self._session.is_connected:
+            self._session.write(data)
+        elif self._ready:
+            # Even if not connected, let terminal display it
+            # (will trigger reconnect flow via _on_terminal_data)
+            data_b64 = base64.b64encode(data).decode('ascii')
+            self._bridge.do_paste.emit(data_b64)
+
+    def set_multiline_threshold(self, lines: int) -> None:
+        """
+        Set the line count threshold for multiline paste warnings.
+
+        Args:
+            lines: Number of lines that triggers confirmation (0 to disable)
+        """
+        self._multiline_threshold = lines
+
+    # -------------------------------------------------------------------------
+    # Bridge callbacks
+    # -------------------------------------------------------------------------
 
     def _on_terminal_ready(self):
         """Terminal initialized, apply settings."""
@@ -208,14 +298,17 @@ class TerminalWidget(QWidget):
         elif self._is_disconnected():
             # User typed while disconnected - offer to reconnect
             if self._awaiting_reconnect_confirm:
-                # They confirmed - emit reconnect signal
+                # They confirmed - reconnect
                 self._awaiting_reconnect_confirm = False
                 self.hide_overlay()
                 self.reconnect_requested.emit()
+                # Actually trigger the reconnection
+                if self._session:
+                    self._session.connect()
             else:
                 # First keypress - show prompt
                 self._awaiting_reconnect_confirm = True
-                self.show_overlay("Disconnected. Press any key to reconnect...")
+                self.show_overlay("Disconnected. Press any key to reconnect...", show_spinner=False)
 
     @pyqtSlot(int, int)
     def _on_terminal_resize(self, cols: int, rows: int):
@@ -223,6 +316,54 @@ class TerminalWidget(QWidget):
         logger.debug(f"Terminal resize: {cols}x{rows}")
         if self._session:
             self._session.resize(cols, rows)
+
+    @pyqtSlot(str)
+    def _on_selection_copied(self, text: str):
+        """Selection was copied to clipboard."""
+        logger.debug(f"Copied {len(text)} chars to clipboard")
+
+    @pyqtSlot(str)
+    def _on_paste_requested(self, data_b64: str):
+        """
+        JS requested paste (from context menu or keyboard).
+        Route through our paste() method for multiline check.
+        """
+        # The JS side read the clipboard - decode and process
+        try:
+            data = base64.b64decode(data_b64)
+            text = data.decode('utf-8', errors='replace')
+
+            line_count = text.count('\n')
+
+            if line_count > self._multiline_threshold:
+                self._pending_paste = data
+
+                lines = text.split('\n')
+                preview_lines = lines[:5]
+                preview = '\n'.join(preview_lines)
+                if len(lines) > 5:
+                    preview += f'\n... ({len(lines) - 5} more lines)'
+
+                self._bridge.show_paste_confirm.emit(preview, len(lines))
+            else:
+                self._send_paste(data)
+        except Exception as e:
+            logger.error(f"Paste decode error: {e}")
+
+    @pyqtSlot()
+    def _on_paste_confirmed(self):
+        """User confirmed multiline paste."""
+        self._bridge.hide_paste_confirm.emit()
+        if self._pending_paste:
+            self._send_paste(self._pending_paste)
+            self._pending_paste = None
+
+    @pyqtSlot()
+    def _on_paste_cancelled(self):
+        """User cancelled multiline paste."""
+        self._bridge.hide_paste_confirm.emit()
+        self._pending_paste = None
+        self.focus()
 
     def _on_session_event(self, event: SessionEvent):
         """Handle session events."""
@@ -236,21 +377,21 @@ class TerminalWidget(QWidget):
             self._awaiting_reconnect_confirm = False
 
             if event.new_state == SessionState.CONNECTING:
-                self.show_overlay("Connecting...")
+                self.show_overlay("Connecting...", show_spinner=True)
             elif event.new_state == SessionState.AUTHENTICATING:
-                self.show_overlay("Authenticating...")
+                self.show_overlay("Authenticating...", show_spinner=True)
             elif event.new_state == SessionState.CONNECTED:
                 self.hide_overlay()
             elif event.new_state == SessionState.DISCONNECTED:
-                self.show_overlay("Disconnected. Press any key to reconnect...")
+                self.show_overlay("Disconnected. Press any key to reconnect...", show_spinner=False)
                 self._awaiting_reconnect_confirm = True
             elif event.new_state == SessionState.FAILED:
-                self.show_overlay(f"Connection failed: {event.message}")
+                self.show_overlay(f"Connection failed: {event.message}", show_spinner=False)
                 # Don't auto-prompt for reconnect on failure, let them decide
 
         elif isinstance(event, InteractionRequired):
             self.interaction_required.emit(event.prompt, event.interaction_type)
-            self.show_overlay(event.prompt)
+            self.show_overlay(event.prompt, show_spinner=False)
 
         elif isinstance(event, BannerReceived):
             # Could display banner in overlay or write to terminal

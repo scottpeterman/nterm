@@ -23,6 +23,8 @@
         #terminal .xterm-viewport {
             overflow-y: auto !important;
         }
+
+        /* Status Overlay */
         #overlay {
             position: absolute;
             top: 0;
@@ -35,8 +37,8 @@
             justify-content: center;
             z-index: 1000;
         }
-        #overlay.visible { 
-            display: flex; 
+        #overlay.visible {
+            display: flex;
         }
         #overlay-content {
             text-align: center;
@@ -57,22 +59,190 @@
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin: 0 auto 16px;
+            display: none;
+        }
+        #overlay-spinner.visible {
+            display: block;
         }
         @keyframes spin {
             to { transform: rotate(360deg); }
+        }
+
+        /* Paste Confirmation Dialog */
+        #paste-confirm {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--overlay-bg, rgba(30, 30, 46, 0.95));
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1001;
+        }
+        #paste-confirm.visible {
+            display: flex;
+        }
+        #paste-confirm-dialog {
+            background: var(--overlay-box-bg, #313244);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+        #paste-confirm-title {
+            color: var(--overlay-text, #cdd6f4);
+            font-family: system-ui, -apple-system, sans-serif;
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        #paste-confirm-subtitle {
+            color: var(--overlay-text, #a6adc8);
+            font-family: system-ui, -apple-system, sans-serif;
+            font-size: 14px;
+            margin-bottom: 16px;
+        }
+        #paste-confirm-preview {
+            background: var(--bg-color, #1e1e2e);
+            border: 1px solid #45475a;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+            font-size: 13px;
+            color: var(--overlay-text, #cdd6f4);
+            white-space: pre-wrap;
+            word-break: break-all;
+            overflow-y: auto;
+            max-height: 300px;
+            flex: 1;
+            margin-bottom: 20px;
+        }
+        #paste-confirm-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+        .paste-btn {
+            font-family: system-ui, -apple-system, sans-serif;
+            font-size: 14px;
+            font-weight: 500;
+            padding: 10px 20px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.15s ease;
+        }
+        .paste-btn-cancel {
+            background: #45475a;
+            color: #cdd6f4;
+        }
+        .paste-btn-cancel:hover {
+            background: #585b70;
+        }
+        .paste-btn-confirm {
+            background: #a6e3a1;
+            color: #1e1e2e;
+        }
+        .paste-btn-confirm:hover {
+            background: #94e2d5;
+        }
+
+        /* Context Menu */
+        #context-menu {
+            position: absolute;
+            background: var(--overlay-box-bg, #313244);
+            border: 1px solid #45475a;
+            border-radius: 8px;
+            padding: 4px 0;
+            min-width: 160px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+            z-index: 1002;
+            display: none;
+        }
+        #context-menu.visible {
+            display: block;
+        }
+        .context-menu-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 16px;
+            color: var(--overlay-text, #cdd6f4);
+            font-family: system-ui, -apple-system, sans-serif;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background-color 0.1s ease;
+        }
+        .context-menu-item:hover {
+            background: #45475a;
+        }
+        .context-menu-item.disabled {
+            color: #6c7086;
+            cursor: default;
+        }
+        .context-menu-item.disabled:hover {
+            background: transparent;
+        }
+        .context-menu-shortcut {
+            color: #6c7086;
+            font-size: 12px;
+            margin-left: 24px;
+        }
+        .context-menu-separator {
+            height: 1px;
+            background: #45475a;
+            margin: 4px 0;
         }
     </style>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
 </head>
 <body>
     <div id="terminal"></div>
+
+    <!-- Status Overlay -->
     <div id="overlay">
         <div id="overlay-content">
             <div id="overlay-spinner"></div>
             <span id="overlay-text"></span>
         </div>
     </div>
-    
+
+    <!-- Paste Confirmation Dialog -->
+    <div id="paste-confirm">
+        <div id="paste-confirm-dialog">
+            <div id="paste-confirm-title">Confirm Multi-line Paste</div>
+            <div id="paste-confirm-subtitle">You are about to paste <span id="paste-line-count">0</span> lines:</div>
+            <pre id="paste-confirm-preview"></pre>
+            <div id="paste-confirm-buttons">
+                <button class="paste-btn paste-btn-cancel" id="paste-cancel">Cancel</button>
+                <button class="paste-btn paste-btn-confirm" id="paste-ok">Paste</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div id="context-menu">
+        <div class="context-menu-item" id="ctx-copy">
+            <span>Copy</span>
+            <span class="context-menu-shortcut">Ctrl+Shift+C</span>
+        </div>
+        <div class="context-menu-item" id="ctx-paste">
+            <span>Paste</span>
+            <span class="context-menu-shortcut">Ctrl+Shift+V</span>
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" id="ctx-clear">
+            <span>Clear Terminal</span>
+            <span class="context-menu-shortcut"></span>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>

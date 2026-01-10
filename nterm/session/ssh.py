@@ -183,6 +183,10 @@ class SSHSession(Session):
         """Set callback for session events."""
         self._event_handler = handler
 
+    def set_auto_reconnect(self, enabled: bool) -> None:
+        """Enable/disable automatic reconnection."""
+        self.profile.auto_reconnect = enabled
+
     def _emit(self, event: SessionEvent) -> None:
         """Emit event to handler."""
         if self._event_handler:

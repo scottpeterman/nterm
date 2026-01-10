@@ -99,3 +99,12 @@ class Session(ABC):
     def set_event_handler(self, handler: Callable[[SessionEvent], None]) -> None:
         """Set callback for session events."""
         pass
+
+    def set_auto_reconnect(self, enabled: bool) -> None:
+        """
+        Enable/disable automatic reconnection.
+
+        Override in subclasses that support auto-reconnect.
+        Default implementation does nothing.
+        """
+        pass
