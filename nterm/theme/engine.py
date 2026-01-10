@@ -286,6 +286,50 @@ class Theme:
         )
 
     @classmethod
+    def clean(cls) -> Theme:
+        """
+        Clean theme.
+
+        Light, professional appearance inspired by classic terminal clients.
+        Warm paper tones with high contrast text.
+        """
+        return cls(
+            name="clean",
+            terminal_colors={
+                "background": "#fdf6e3",
+                "foreground": "#3c3836",
+                "cursor": "#3c3836",
+                "cursorAccent": "#fdf6e3",
+                "selectionBackground": "#d5c4a1",
+                "selectionForeground": "#3c3836",
+                "black": "#3c3836",
+                "red": "#cc241d",
+                "green": "#98971a",
+                "yellow": "#d79921",
+                "blue": "#458588",
+                "magenta": "#b16286",
+                "cyan": "#689d6a",
+                "white": "#a89984",
+                "brightBlack": "#928374",
+                "brightRed": "#9d0006",
+                "brightGreen": "#79740e",
+                "brightYellow": "#b57614",
+                "brightBlue": "#076678",
+                "brightMagenta": "#8f3f71",
+                "brightCyan": "#427b58",
+                "brightWhite": "#fbf1c7",
+            },
+            font_family="JetBrains Mono, Cascadia Code, Consolas, Menlo, monospace",
+            font_size=14,
+            background_color="#f5f0e1",
+            foreground_color="#3c3836",
+            border_color="#d5c4a1",
+            accent_color="#d79921",
+            overlay_background="rgba(245, 240, 225, 0.95)",
+            overlay_text_color="#3c3836",
+        )
+
+    @classmethod
     def gruvbox_hybrid(cls) -> Theme:
         """
         Gruvbox Hybrid theme.
@@ -355,6 +399,7 @@ class ThemeEngine:
         self._themes["gruvbox_dark"] = Theme.gruvbox_dark()
         self._themes["gruvbox_light"] = Theme.gruvbox_light()
         self._themes["gruvbox_hybrid"] = Theme.gruvbox_hybrid()
+        self._themes["clean"] = Theme.clean()
 
     def load_themes(self) -> None:
         """Load all themes from theme directory."""

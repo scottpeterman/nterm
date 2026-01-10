@@ -80,10 +80,11 @@
             fitAddon.fit();
         }, 0);
 
-        // Handle user input
+        // Handle user input - properly encode UTF-8 to base64
         term.onData(data => {
             if (bridge) {
-                bridge.onData(btoa(data));
+                // Encode UTF-8 string to base64
+                bridge.onData(btoa(unescape(encodeURIComponent(data))));
             }
         });
 
@@ -286,10 +287,16 @@
         new QWebChannel(qt.webChannelTransport, function(channel) {
             bridge = channel.objects.bridge;
 
-            // Data from Python to terminal
+            // Data from Python to terminal - properly decode UTF-8
             bridge.write_data.connect(function(dataB64) {
                 try {
-                    const data = atob(dataB64);
+                    // Decode base64 to binary string, then to UTF-8
+                    const binaryString = atob(dataB64);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                        bytes[i] = binaryString.charCodeAt(i);
+                    }
+                    const data = new TextDecoder('utf-8').decode(bytes);
                     term.write(data);
                 } catch (e) {
                     console.error('Write error:', e);
