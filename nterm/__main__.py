@@ -28,6 +28,7 @@ from nterm.vault.resolver import CredentialResolver
 from nterm.theme.engine import ThemeEngine, Theme
 from nterm.theme.stylesheet import generate_stylesheet
 from nterm.manager.connect_dialog import ConnectDialog
+from nterm.config import get_settings_manager, get_settings, save_settings
 
 
 
@@ -222,8 +223,25 @@ class MainWindow(QMainWindow):
         self.credential_resolver = credential_resolver
         self.theme_engine = ThemeEngine()
 
-        # Current theme
-        self.current_theme = self.theme_engine.current
+        # Load persistent settings
+        self.settings_manager = get_settings_manager()
+        self.app_settings = self.settings_manager.settings
+
+        # Apply saved window geometry
+        self.resize(self.app_settings.window_width, self.app_settings.window_height)
+        if self.app_settings.window_x is not None and self.app_settings.window_y is not None:
+            self.move(self.app_settings.window_x, self.app_settings.window_y)
+        if self.app_settings.window_maximized:
+            self.showMaximized()
+
+        # Initialize stores
+        self.session_store = SessionStore()
+        self.credential_resolver = credential_resolver
+        self.theme_engine = ThemeEngine()
+
+        # Load saved theme (instead of default)
+        saved_theme = self.theme_engine.get_theme(self.app_settings.theme_name)
+        self.current_theme = saved_theme if saved_theme else self.theme_engine.current
 
         self._setup_ui()
         self._connect_signals()
@@ -231,6 +249,23 @@ class MainWindow(QMainWindow):
 
         # Apply initial stylesheet
         self._apply_qt_theme(self.current_theme)
+        self._setup_ui()
+        self._connect_signals()
+        self._refresh_credentials()
+
+        # Apply initial stylesheet
+        self._apply_qt_theme(self.current_theme)
+
+    def _on_settings_changed(self, settings):
+        """Handle settings changes from dialog."""
+        self.app_settings = settings
+
+        # Apply multiline threshold to all open terminals
+        for i in range(self.tab_widget.count()):
+            tab = self.tab_widget.widget(i)
+            if isinstance(tab, TerminalTab):
+                tab.terminal.set_multiline_threshold(settings.multiline_paste_threshold)
+
 
     def _refresh_credentials(self):
         """Refresh credential list for session editor."""
@@ -505,6 +540,14 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Clean up on close."""
+        if not self.isMaximized():
+            self.app_settings.window_width = self.width()
+            self.app_settings.window_height = self.height()
+            self.app_settings.window_x = self.x()
+            self.app_settings.window_y = self.y()
+        self.app_settings.window_maximized = self.isMaximized()
+
+        save_settings()
         # Disconnect all tabs
         for i in range(self.tab_widget.count()):
             tab = self.tab_widget.widget(i)

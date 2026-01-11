@@ -1,20 +1,21 @@
 """
-Settings dialog with theme selection.
+Settings dialog with theme selection and persistence.
 """
 
 from __future__ import annotations
-from typing import Optional, Callable
+from typing import Optional
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QComboBox, QSpinBox, QFontComboBox, QPushButton,
+    QComboBox, QSpinBox, QPushButton,
     QDialogButtonBox, QGroupBox, QLabel, QWidget,
     QFrame, QCheckBox
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtGui import QFont
 
 from nterm.theme.engine import ThemeEngine, Theme
+from nterm.config import get_settings, save_settings, AppSettings
 
 
 class ThemePreview(QFrame):
@@ -90,13 +91,15 @@ class ThemePreview(QFrame):
 
 class SettingsDialog(QDialog):
     """
-    Application settings dialog.
+    Application settings dialog with persistence.
 
     Signals:
         theme_changed(theme): Emitted when theme selection changes
+        settings_changed(settings): Emitted when any settings change
     """
 
     theme_changed = pyqtSignal(object)  # Theme
+    settings_changed = pyqtSignal(object)  # AppSettings
 
     def __init__(
             self,
@@ -106,8 +109,10 @@ class SettingsDialog(QDialog):
     ):
         super().__init__(parent)
         self.theme_engine = theme_engine
+        self._settings = get_settings()
         self._current_theme = current_theme or theme_engine.current
         self._original_theme = self._current_theme
+        self._original_settings = AppSettings.from_dict(self._settings.to_dict())
 
         self._setup_ui()
         self._load_settings()
@@ -129,7 +134,6 @@ class SettingsDialog(QDialog):
 
         self._theme_combo = QComboBox()
         for name in self.theme_engine.list_themes():
-            theme = self.theme_engine.get_theme(name)
             self._theme_combo.addItem(name.replace("_", " ").title(), name)
         self._theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         selector_row.addWidget(self._theme_combo, 1)
@@ -154,6 +158,31 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(font_group)
 
+        # Terminal behavior group
+        behavior_group = QGroupBox("Terminal Behavior")
+        behavior_layout = QFormLayout(behavior_group)
+
+        self._multiline_spin = QSpinBox()
+        self._multiline_spin.setRange(0, 100)
+        self._multiline_spin.setValue(self._settings.multiline_paste_threshold)
+        self._multiline_spin.setSpecialValueText("Disabled")
+        self._multiline_spin.setToolTip("Warn before pasting text with more than this many lines (0 to disable)")
+        behavior_layout.addRow("Multiline paste warning:", self._multiline_spin)
+
+        self._scrollback_spin = QSpinBox()
+        self._scrollback_spin.setRange(1000, 100000)
+        self._scrollback_spin.setSingleStep(1000)
+        self._scrollback_spin.setValue(self._settings.scrollback_lines)
+        self._scrollback_spin.setSuffix(" lines")
+        behavior_layout.addRow("Scrollback buffer:", self._scrollback_spin)
+
+        self._auto_reconnect_check = QCheckBox()
+        self._auto_reconnect_check.setChecked(self._settings.auto_reconnect)
+        self._auto_reconnect_check.setToolTip("Automatically attempt to reconnect when connection is lost")
+        behavior_layout.addRow("Auto-reconnect:", self._auto_reconnect_check)
+
+        layout.addWidget(behavior_group)
+
         # Spacer
         layout.addStretch()
 
@@ -171,12 +200,20 @@ class SettingsDialog(QDialog):
     def _load_settings(self) -> None:
         """Load current settings into form."""
         # Select current theme
-        idx = self._theme_combo.findData(self._current_theme.name)
+        idx = self._theme_combo.findData(self._settings.theme_name)
         if idx >= 0:
             self._theme_combo.setCurrentIndex(idx)
+        else:
+            # Fallback to current theme
+            idx = self._theme_combo.findData(self._current_theme.name)
+            if idx >= 0:
+                self._theme_combo.setCurrentIndex(idx)
 
         self._preview.set_theme(self._current_theme)
-        self._font_size_spin.setValue(self._current_theme.font_size)
+        self._font_size_spin.setValue(self._settings.font_size)
+        self._multiline_spin.setValue(self._settings.multiline_paste_threshold)
+        self._scrollback_spin.setValue(self._settings.scrollback_lines)
+        self._auto_reconnect_check.setChecked(self._settings.auto_reconnect)
 
     def _on_theme_changed(self, index: int) -> None:
         """Handle theme selection change."""
@@ -187,11 +224,24 @@ class SettingsDialog(QDialog):
             self._preview.set_theme(theme)
 
     def _apply(self) -> None:
-        """Apply current settings."""
+        """Apply current settings and persist."""
+        # Update settings object
+        self._settings.theme_name = self._theme_combo.currentData()
+        self._settings.font_size = self._font_size_spin.value()
+        self._settings.multiline_paste_threshold = self._multiline_spin.value()
+        self._settings.scrollback_lines = self._scrollback_spin.value()
+        self._settings.auto_reconnect = self._auto_reconnect_check.isChecked()
+
         # Update font size on theme
         self._current_theme.font_size = self._font_size_spin.value()
         self.theme_engine.current = self._current_theme
+
+        # Save to disk
+        save_settings()
+
+        # Emit signals
         self.theme_changed.emit(self._current_theme)
+        self.settings_changed.emit(self._settings)
 
     def _on_accept(self) -> None:
         """Accept and close."""
@@ -208,3 +258,7 @@ class SettingsDialog(QDialog):
     def get_theme(self) -> Theme:
         """Get selected theme."""
         return self._current_theme
+
+    def get_settings(self) -> AppSettings:
+        """Get current settings."""
+        return self._settings

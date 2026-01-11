@@ -108,7 +108,7 @@ class SessionTreeWidget(QWidget):
         self._connect_tab_btn.setEnabled(False)
         btn_row.addWidget(self._connect_tab_btn)
         
-        self._connect_win_btn = QPushButton("New Window")
+        self._connect_win_btn = QPushButton("New")
         self._connect_win_btn.setToolTip("Connect in separate window")
         self._connect_win_btn.clicked.connect(lambda: self._connect_selected(self.MODE_WINDOW))
         self._connect_win_btn.setEnabled(False)
