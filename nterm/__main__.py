@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QSplitter, QTabWidget,
     QWidget, QVBoxLayout, QHBoxLayout, QMessageBox,
     QDialog, QLabel, QLineEdit, QPushButton, QCheckBox,
-    QMenuBar, QMenu
+    QMenuBar, QMenu, QTabBar
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QKeySequence
@@ -207,6 +207,23 @@ class TerminalTab(QWidget):
         """Disconnect the session."""
         self.ssh_session.disconnect()
 
+    def is_connected(self) -> bool:
+        """Check if the session is currently connected."""
+        # Try multiple ways to detect connection state
+        if hasattr(self.ssh_session, 'is_connected'):
+            return self.ssh_session.is_connected
+        if hasattr(self.ssh_session, 'connected'):
+            return self.ssh_session.connected
+        if hasattr(self.ssh_session, '_connected'):
+            return self.ssh_session._connected
+        if hasattr(self.ssh_session, '_channel'):
+            return self.ssh_session._channel is not None
+        if hasattr(self.ssh_session, '_transport'):
+            transport = self.ssh_session._transport
+            return transport is not None and transport.is_active()
+        # Default to True if we can't determine - safer to warn
+        return True
+
 
 class MainWindow(QMainWindow):
     """
@@ -243,12 +260,6 @@ class MainWindow(QMainWindow):
         saved_theme = self.theme_engine.get_theme(self.app_settings.theme_name)
         self.current_theme = saved_theme if saved_theme else self.theme_engine.current
 
-        self._setup_ui()
-        self._connect_signals()
-        self._refresh_credentials()
-
-        # Apply initial stylesheet
-        self._apply_qt_theme(self.current_theme)
         self._setup_ui()
         self._connect_signals()
         self._refresh_credentials()
@@ -298,6 +309,10 @@ class MainWindow(QMainWindow):
         self.tab_widget.setDocumentMode(True)
         splitter.addWidget(self.tab_widget)
 
+        # Enable tab context menu
+        self.tab_widget.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tab_widget.tabBar().customContextMenuRequested.connect(self._show_tab_context_menu)
+
         # Set initial sizes (tree: 250px, tabs: rest)
         splitter.setSizes([250, 950])
 
@@ -322,6 +337,20 @@ class MainWindow(QMainWindow):
         file_menu.addAction(quick_connect_action)
 
         file_menu.addSeparator()
+
+        # --- NEW: Tab management actions ---
+        close_tab_action = QAction("Close Tab", self)
+        close_tab_action.setShortcut(QKeySequence("Ctrl+W"))
+        close_tab_action.triggered.connect(self._close_current_tab)
+        file_menu.addAction(close_tab_action)
+
+        close_all_action = QAction("Close All Tabs", self)
+        close_all_action.setShortcut(QKeySequence("Ctrl+Shift+W"))
+        close_all_action.triggered.connect(self._close_all_tabs)
+        file_menu.addAction(close_all_action)
+
+        file_menu.addSeparator()
+        # --- END NEW ---
 
         import_action = QAction("&Import Sessions...", self)
         import_action.setShortcut(QKeySequence("Ctrl+I"))
@@ -531,15 +560,159 @@ class MainWindow(QMainWindow):
         self._child_windows.append(window)
         window.destroyed.connect(lambda: self._child_windows.remove(window))
 
+    # -------------------------------------------------------------------------
+    # Tab Management (NEW)
+    # -------------------------------------------------------------------------
+
+    def _get_active_session_count(self) -> int:
+        """Count tabs with active connections."""
+        count = 0
+        for i in range(self.tab_widget.count()):
+            tab = self.tab_widget.widget(i)
+            if isinstance(tab, TerminalTab) and tab.is_connected():
+                count += 1
+        return count
+
+    def _show_tab_context_menu(self, pos):
+        """Show context menu for tab bar."""
+        tab_bar = self.tab_widget.tabBar()
+        index = tab_bar.tabAt(pos)
+
+        menu = QMenu(self)
+
+        if index >= 0:
+            # Clicked on a tab
+            menu.addAction("Close", lambda: self._close_tab(index))
+            menu.addAction("Close Others", lambda: self._close_other_tabs(index))
+            menu.addAction("Close Tabs to the Right", lambda: self._close_tabs_to_right(index))
+            menu.addSeparator()
+
+        if self.tab_widget.count() > 0:
+            menu.addAction("Close All Tabs", self._close_all_tabs)
+
+        if menu.actions():
+            menu.exec(tab_bar.mapToGlobal(pos))
+
+    def _close_current_tab(self):
+        """Close the currently active tab."""
+        index = self.tab_widget.currentIndex()
+        if index >= 0:
+            self._close_tab(index)
+
     def _close_tab(self, index: int):
-        """Close a terminal tab."""
+        """Close a terminal tab with confirmation if connected."""
         tab = self.tab_widget.widget(index)
+
         if isinstance(tab, TerminalTab):
+            # Check if session is active
+            if tab.is_connected():
+                reply = QMessageBox.question(
+                    self,
+                    "Close Tab",
+                    f"'{tab.session.name}' has an active connection.\n\n"
+                    "Disconnect and close this tab?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+
             tab.disconnect()
+
         self.tab_widget.removeTab(index)
 
+    def _close_other_tabs(self, keep_index: int):
+        """Close all tabs except the specified one."""
+        active_count = self._get_active_session_count()
+        tab_to_keep = self.tab_widget.widget(keep_index)
+        keep_is_active = isinstance(tab_to_keep, TerminalTab) and tab_to_keep.is_connected()
+        other_active = active_count - (1 if keep_is_active else 0)
+
+        if other_active > 0:
+            reply = QMessageBox.question(
+                self,
+                "Close Other Tabs",
+                f"{other_active} other tab(s) have active connections.\n\n"
+                "Disconnect and close them?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        # Close tabs from end to avoid index shifting issues
+        for i in range(self.tab_widget.count() - 1, -1, -1):
+            if i != keep_index:
+                tab = self.tab_widget.widget(i)
+                if isinstance(tab, TerminalTab):
+                    tab.disconnect()
+                self.tab_widget.removeTab(i)
+
+    def _close_tabs_to_right(self, index: int):
+        """Close all tabs to the right of the specified index."""
+        tabs_to_close = self.tab_widget.count() - index - 1
+        if tabs_to_close <= 0:
+            return
+
+        # Count active sessions to the right
+        active_count = 0
+        for i in range(index + 1, self.tab_widget.count()):
+            tab = self.tab_widget.widget(i)
+            if isinstance(tab, TerminalTab) and tab.is_connected():
+                active_count += 1
+
+        if active_count > 0:
+            reply = QMessageBox.question(
+                self,
+                "Close Tabs",
+                f"{active_count} tab(s) to the right have active connections.\n\n"
+                "Disconnect and close them?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        # Close from end to avoid index shifting
+        for i in range(self.tab_widget.count() - 1, index, -1):
+            tab = self.tab_widget.widget(i)
+            if isinstance(tab, TerminalTab):
+                tab.disconnect()
+            self.tab_widget.removeTab(i)
+
+    def _close_all_tabs(self):
+        """Close all tabs with confirmation."""
+        if self.tab_widget.count() == 0:
+            return
+
+        active_count = self._get_active_session_count()
+
+        if active_count > 0:
+            reply = QMessageBox.question(
+                self,
+                "Close All Tabs",
+                f"{active_count} tab(s) have active connections.\n\n"
+                "Disconnect and close all tabs?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        # Close all tabs
+        while self.tab_widget.count() > 0:
+            tab = self.tab_widget.widget(0)
+            if isinstance(tab, TerminalTab):
+                tab.disconnect()
+            self.tab_widget.removeTab(0)
+
+    # -------------------------------------------------------------------------
+    # End Tab Management
+    # -------------------------------------------------------------------------
+
     def closeEvent(self, event):
-        """Clean up on close."""
+        """Clean up on close with confirmation for active sessions."""
+        # Save window geometry first
         if not self.isMaximized():
             self.app_settings.window_width = self.width()
             self.app_settings.window_height = self.height()
@@ -547,7 +720,24 @@ class MainWindow(QMainWindow):
             self.app_settings.window_y = self.y()
         self.app_settings.window_maximized = self.isMaximized()
 
+        # Check for active connections
+        active_count = self._get_active_session_count()
+
+        if active_count > 0:
+            reply = QMessageBox.question(
+                self,
+                "Quit nterm",
+                f"You have {active_count} active session(s).\n\n"
+                "Disconnect all and quit?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+
         save_settings()
+
         # Disconnect all tabs
         for i in range(self.tab_widget.count()):
             tab = self.tab_widget.widget(i)
@@ -582,7 +772,20 @@ class TerminalWindow(QMainWindow):
         self.tab.connect()
 
     def closeEvent(self, event):
-        """Disconnect on close."""
+        """Disconnect on close with confirmation."""
+        if self.tab.is_connected():
+            reply = QMessageBox.question(
+                self,
+                "Close Window",
+                f"'{self.tab.session.name}' has an active connection.\n\n"
+                "Disconnect and close?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+
         self.tab.disconnect()
         event.accept()
 

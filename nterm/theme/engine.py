@@ -285,6 +285,241 @@ class Theme:
             overlay_text_color="#3c3836",
         )
 
+
+    @classmethod
+    def enterprise_dark(cls) -> Theme:
+        """
+        Enterprise Dark theme.
+
+        Classic corporate dark theme with pure black terminal.
+        Microsoft-inspired blue accent palette.
+        """
+        return cls(
+            name="enterprise_dark",
+            terminal_colors={
+                "background": "#0c0c0c",
+                "foreground": "#cccccc",
+                "cursor": "#ffffff",
+                "cursorAccent": "#0c0c0c",
+                "selectionBackground": "#264f78",
+                "selectionForeground": "#ffffff",
+                # Windows Terminal-inspired palette
+                "black": "#0c0c0c",
+                "red": "#c50f1f",
+                "green": "#13a10e",
+                "yellow": "#c19c00",
+                "blue": "#0037da",
+                "magenta": "#881798",
+                "cyan": "#3a96dd",
+                "white": "#cccccc",
+                "brightBlack": "#767676",
+                "brightRed": "#e74856",
+                "brightGreen": "#16c60c",
+                "brightYellow": "#f9f1a5",
+                "brightBlue": "#3b78ff",
+                "brightMagenta": "#b4009e",
+                "brightCyan": "#61d6d6",
+                "brightWhite": "#f2f2f2",
+            },
+            font_family="Cascadia Code, Consolas, JetBrains Mono, monospace",
+            font_size=14,
+            background_color="#1e1e1e",
+            foreground_color="#d4d4d4",
+            border_color="#3c3c3c",
+            accent_color="#0078d4",
+            overlay_background="rgba(30, 30, 30, 0.95)",
+            overlay_text_color="#d4d4d4",
+        )
+
+        # Add these class methods to Theme class in engine.py
+        # Add to _themes dict in ThemeEngine.__init__():
+        #   self._themes["enterprise_dark"] = Theme.enterprise_dark()
+        #   self._themes["enterprise_light"] = Theme.enterprise_light()
+        #   self._themes["enterprise_hybrid"] = Theme.enterprise_hybrid()
+
+        @classmethod
+        def enterprise_dark(cls) -> Theme:
+            """
+            Enterprise Dark theme.
+
+            Classic corporate dark theme with pure black terminal.
+            Microsoft-inspired blue accent palette.
+            """
+            return cls(
+                name="enterprise_dark",
+                terminal_colors={
+                    "background": "#0c0c0c",
+                    "foreground": "#cccccc",
+                    "cursor": "#ffffff",
+                    "cursorAccent": "#0c0c0c",
+                    "selectionBackground": "#264f78",
+                    "selectionForeground": "#ffffff",
+                    # Windows Terminal-inspired palette
+                    "black": "#0c0c0c",
+                    "red": "#c50f1f",
+                    "green": "#13a10e",
+                    "yellow": "#c19c00",
+                    "blue": "#0037da",
+                    "magenta": "#881798",
+                    "cyan": "#3a96dd",
+                    "white": "#cccccc",
+                    "brightBlack": "#767676",
+                    "brightRed": "#e74856",
+                    "brightGreen": "#16c60c",
+                    "brightYellow": "#f9f1a5",
+                    "brightBlue": "#3b78ff",
+                    "brightMagenta": "#b4009e",
+                    "brightCyan": "#61d6d6",
+                    "brightWhite": "#f2f2f2",
+                },
+                font_family="Cascadia Code, Consolas, JetBrains Mono, monospace",
+                font_size=14,
+                background_color="#1e1e1e",
+                foreground_color="#d4d4d4",
+                border_color="#3c3c3c",
+                accent_color="#0078d4",
+                overlay_background="rgba(30, 30, 30, 0.95)",
+                overlay_text_color="#d4d4d4",
+            )
+
+        @classmethod
+        def enterprise_light(cls) -> Theme:
+            """
+            Enterprise Light theme.
+
+            Classic corporate light theme with white terminal.
+            Microsoft-inspired blue accent palette.
+            """
+            return cls(
+                name="enterprise_light",
+                terminal_colors={
+                    "background": "#ffffff",
+                    "foreground": "#1e1e1e",
+                    "cursor": "#1e1e1e",
+                    "cursorAccent": "#ffffff",
+                    "selectionBackground": "#add6ff",
+                    "selectionForeground": "#1e1e1e",
+                    # Light terminal palette
+                    "black": "#1e1e1e",
+                    "red": "#c72e2e",
+                    "green": "#098658",
+                    "yellow": "#795e26",
+                    "blue": "#0451a5",
+                    "magenta": "#a626a4",
+                    "cyan": "#0598bc",
+                    "white": "#d4d4d4",
+                    "brightBlack": "#5a5a5a",
+                    "brightRed": "#e51400",
+                    "brightGreen": "#14a114",
+                    "brightYellow": "#b5a000",
+                    "brightBlue": "#0078d4",
+                    "brightMagenta": "#bc05bc",
+                    "brightCyan": "#00b7c3",
+                    "brightWhite": "#f8f8f8",
+                },
+                font_family="Cascadia Code, Consolas, JetBrains Mono, monospace",
+                font_size=14,
+                background_color="#f3f3f3",
+                foreground_color="#1e1e1e",
+                border_color="#d1d1d1",
+                accent_color="#0078d4",
+                overlay_background="rgba(243, 243, 243, 0.95)",
+                overlay_text_color="#1e1e1e",
+            )
+
+    @classmethod
+    def enterprise_hybrid(cls) -> Theme:
+        """
+        Enterprise Hybrid theme.
+
+        Dark UI chrome with white terminal.
+        Best of both: comfortable dark UI, high-contrast readable terminal.
+        Microsoft-inspired blue accent palette.
+        """
+        return cls(
+            name="enterprise_hybrid",
+            # Light terminal for readability
+            terminal_colors={
+                "background": "#ffffff",
+                "foreground": "#1e1e1e",
+                "cursor": "#1e1e1e",
+                "cursorAccent": "#ffffff",
+                "selectionBackground": "#add6ff",
+                "selectionForeground": "#1e1e1e",
+                "black": "#1e1e1e",
+                "red": "#c72e2e",
+                "green": "#098658",
+                "yellow": "#795e26",
+                "blue": "#0451a5",
+                "magenta": "#a626a4",
+                "cyan": "#0598bc",
+                "white": "#d4d4d4",
+                "brightBlack": "#5a5a5a",
+                "brightRed": "#e51400",
+                "brightGreen": "#14a114",
+                "brightYellow": "#b5a000",
+                "brightBlue": "#0078d4",
+                "brightMagenta": "#bc05bc",
+                "brightCyan": "#00b7c3",
+                "brightWhite": "#f8f8f8",
+            },
+            font_family="Cascadia Code, Consolas, JetBrains Mono, monospace",
+            font_size=14,
+            # Dark UI chrome
+            background_color="#1e1e1e",
+            foreground_color="#d4d4d4",
+            border_color="#3c3c3c",
+            accent_color="#0078d4",
+            overlay_background="rgba(30, 30, 30, 0.95)",
+            overlay_text_color="#d4d4d4",
+        )
+
+
+    @classmethod
+    def enterprise_light(cls) -> Theme:
+        """
+        Enterprise Light theme.
+
+        Classic corporate light theme with white terminal.
+        Microsoft-inspired blue accent palette.
+        """
+        return cls(
+            name="enterprise_light",
+            terminal_colors={
+                "background": "#ffffff",
+                "foreground": "#1e1e1e",
+                "cursor": "#1e1e1e",
+                "cursorAccent": "#ffffff",
+                "selectionBackground": "#add6ff",
+                "selectionForeground": "#1e1e1e",
+                # Light terminal palette
+                "black": "#1e1e1e",
+                "red": "#c72e2e",
+                "green": "#098658",
+                "yellow": "#795e26",
+                "blue": "#0451a5",
+                "magenta": "#a626a4",
+                "cyan": "#0598bc",
+                "white": "#d4d4d4",
+                "brightBlack": "#5a5a5a",
+                "brightRed": "#e51400",
+                "brightGreen": "#14a114",
+                "brightYellow": "#b5a000",
+                "brightBlue": "#0078d4",
+                "brightMagenta": "#bc05bc",
+                "brightCyan": "#00b7c3",
+                "brightWhite": "#f8f8f8",
+            },
+            font_family="Cascadia Code, Consolas, JetBrains Mono, monospace",
+            font_size=14,
+            background_color="#f3f3f3",
+            foreground_color="#1e1e1e",
+            border_color="#d1d1d1",
+            accent_color="#0078d4",
+            overlay_background="rgba(243, 243, 243, 0.95)",
+            overlay_text_color="#1e1e1e",
+        )
+
     @classmethod
     def clean(cls) -> Theme:
         """
@@ -400,6 +635,9 @@ class ThemeEngine:
         self._themes["gruvbox_light"] = Theme.gruvbox_light()
         self._themes["gruvbox_hybrid"] = Theme.gruvbox_hybrid()
         self._themes["clean"] = Theme.clean()
+        self._themes["enterprise_dark"] = Theme.enterprise_dark()
+        self._themes["enterprise_light"] = Theme.enterprise_light()
+        self._themes["enterprise_hybrid"] = Theme.enterprise_hybrid()
 
     def load_themes(self) -> None:
         """Load all themes from theme directory."""

@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nterm"
-version = "0.1.0"
+name = "ntermqt"
+version = "0.1.1"
 description = "Modern SSH terminal widget for PyQt6 with credential vault and jump host support"
 readme = "README.md"
 license = {text = "GPL-3.0"}
@@ -57,15 +57,3 @@ nterm = [
     "terminal/resources/*.css",
     "theme/themes/*.yaml",
 ]
-```
-
-**`MANIFEST.in`:**
-```
-include LICENSE
-include README.md
-recursive-include nterm/terminal/resources *
-recursive-include nterm/theme/themes *.yaml
-prune nterm/examples
-prune screenshots
-global-exclude __pycache__
-global-exclude *.pyc

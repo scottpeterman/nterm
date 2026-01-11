@@ -6,7 +6,7 @@ PyQt6 terminal widget with encrypted credential vault, jump host chaining, YubiK
 
 Built for managing hundreds of devices through bastion hosts with hardware security keys.
 
-![nterm screenshot](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/gruvbox.png)
+![nterm screenshot](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/slides.gif)
 
 ---
 
