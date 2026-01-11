@@ -46,9 +46,9 @@ Built for managing hundreds of devices through bastion hosts with hardware secur
 |---------------------|-------------------|
 | ![gruvbox](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/gruvbox.png) | ![vault](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/vault.png) |
 
-| Connection Dialog | Multi-vendor Support |
-|------------------|---------------------|
-| ![connect](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/connection_dialog.png) | ![neofetch](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/neofetch.png) |
+| Connection Dialog                                                                            | Multi-vendor Support |
+|----------------------------------------------------------------------------------------------|---------------------|
+| ![connect](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/creds.png) | ![neofetch](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/neofetch.png) |
 
 ---
 
