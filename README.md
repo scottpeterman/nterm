@@ -53,20 +53,19 @@ Built for managing hundreds of devices through bastion hosts with hardware secur
 ---
 
 ## Installation
-
+### Be aware due to a naming conflict, the pypi package is acutally "ntermqt"
 ### From PyPI
-
+https://pypi.org/project/ntermqt/
 ```bash
-pip install nterm
+pip install ntermqt
 
-# Optional: system keychain support
-pip install nterm[keyring]
+
 
 # Run
 nterm
 ```
 
-### From Source
+### From Source - nterm name is correct
 
 ```bash
 git clone https://github.com/scottpeterman/nterm.git
@@ -79,9 +78,6 @@ source .venv/bin/activate  # Linux/macOS
 
 # Install in development mode
 pip install -e .
-
-# Optional: system keychain support
-pip install keyring
 
 # Run
 nterm
@@ -289,3 +285,6 @@ Contributions welcome:
 - Windows testing  
 - Session recording/playback
 - Telnet/serial support
+
+
+
