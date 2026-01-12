@@ -22,6 +22,7 @@ from nterm.manager import (
 )
 from nterm.terminal.widget import TerminalWidget
 from nterm.session.ssh import SSHSession
+from nterm.session.local_terminal import LocalTerminal
 from nterm.connection.profile import ConnectionProfile, AuthConfig
 from nterm.vault import CredentialManagerWidget
 from nterm.vault.resolver import CredentialResolver
@@ -225,6 +226,35 @@ class TerminalTab(QWidget):
         return True
 
 
+class LocalTerminalTab(QWidget):
+    """A terminal tab for local processes (shell, IPython, etc.)."""
+
+    def __init__(self, name: str, session: LocalTerminal, parent=None):
+        super().__init__(parent)
+        self.name = name
+        self.local_session = session
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.terminal = TerminalWidget()
+        layout.addWidget(self.terminal)
+
+        self.terminal.attach_session(self.local_session)
+
+    def connect(self):
+        """Start the local process."""
+        self.local_session.connect()
+
+    def disconnect(self):
+        """Terminate the local process."""
+        self.local_session.disconnect()
+
+    def is_connected(self) -> bool:
+        """Check if the process is still running."""
+        return self.local_session.is_connected
+
+
 class MainWindow(QMainWindow):
     """
     Main application window with session tree and tabbed terminals.
@@ -274,7 +304,7 @@ class MainWindow(QMainWindow):
         # Apply multiline threshold to all open terminals
         for i in range(self.tab_widget.count()):
             tab = self.tab_widget.widget(i)
-            if isinstance(tab, TerminalTab):
+            if isinstance(tab, (TerminalTab, LocalTerminalTab)):
                 tab.terminal.set_multiline_threshold(settings.multiline_paste_threshold)
 
 
@@ -401,6 +431,32 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda checked, n=theme_name: self._apply_theme_by_name(n))
             theme_menu.addAction(action)
 
+        # Dev menu
+        dev_menu = menubar.addMenu("&Dev")
+
+        # IPython submenu
+        ipython_menu = dev_menu.addMenu("&IPython")
+
+        ipython_tab_action = QAction("Open in &Tab", self)
+        ipython_tab_action.setShortcut(QKeySequence("Ctrl+Shift+I"))
+        ipython_tab_action.triggered.connect(lambda: self._open_local("IPython", LocalTerminal.ipython(), "tab"))
+        ipython_menu.addAction(ipython_tab_action)
+
+        ipython_window_action = QAction("Open in &Window", self)
+        ipython_window_action.triggered.connect(lambda: self._open_local("IPython", LocalTerminal.ipython(), "window"))
+        ipython_menu.addAction(ipython_window_action)
+
+        # Shell submenu
+        shell_menu = dev_menu.addMenu("&Shell")
+
+        shell_tab_action = QAction("Open in &Tab", self)
+        shell_tab_action.triggered.connect(lambda: self._open_local("Shell", LocalTerminal(), "tab"))
+        shell_menu.addAction(shell_tab_action)
+
+        shell_window_action = QAction("Open in &Window", self)
+        shell_window_action.triggered.connect(lambda: self._open_local("Shell", LocalTerminal(), "window"))
+        shell_menu.addAction(shell_window_action)
+
     def _on_import_sessions(self):
         """Show import dialog."""
         dialog = ImportDialog(self.session_store, self)
@@ -445,7 +501,7 @@ class MainWindow(QMainWindow):
         # Update all open terminal tabs
         for i in range(self.tab_widget.count()):
             tab = self.tab_widget.widget(i)
-            if isinstance(tab, TerminalTab):
+            if isinstance(tab, (TerminalTab, LocalTerminalTab)):
                 tab.terminal.set_theme(theme)
 
     def _apply_qt_theme(self, theme: Theme):
@@ -560,6 +616,23 @@ class MainWindow(QMainWindow):
         self._child_windows.append(window)
         window.destroyed.connect(lambda: self._child_windows.remove(window))
 
+    def _open_local(self, name: str, session: LocalTerminal, mode: str):
+        """Open a local terminal session (IPython, shell, etc.)."""
+        if mode == "tab":
+            tab = LocalTerminalTab(name, session)
+            tab.terminal.set_theme(self.current_theme)
+            idx = self.tab_widget.addTab(tab, name)
+            self.tab_widget.setCurrentIndex(idx)
+            self.tab_widget.setTabToolTip(idx, f"{name} (local)")
+            tab.connect()
+        else:
+            window = LocalTerminalWindow(name, session, self.current_theme)
+            window.show()
+            if not hasattr(self, '_child_windows'):
+                self._child_windows = []
+            self._child_windows.append(window)
+            window.destroyed.connect(lambda: self._child_windows.remove(window))
+
     # -------------------------------------------------------------------------
     # Tab Management (NEW)
     # -------------------------------------------------------------------------
@@ -569,7 +642,7 @@ class MainWindow(QMainWindow):
         count = 0
         for i in range(self.tab_widget.count()):
             tab = self.tab_widget.widget(i)
-            if isinstance(tab, TerminalTab) and tab.is_connected():
+            if isinstance(tab, (TerminalTab, LocalTerminalTab)) and tab.is_connected():
                 count += 1
         return count
 
@@ -619,13 +692,29 @@ class MainWindow(QMainWindow):
 
             tab.disconnect()
 
+        elif isinstance(tab, LocalTerminalTab):
+            # Check if process is still running
+            if tab.is_connected():
+                reply = QMessageBox.question(
+                    self,
+                    "Close Tab",
+                    f"'{tab.name}' is still running.\n\n"
+                    "Terminate and close this tab?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+
+            tab.disconnect()
+
         self.tab_widget.removeTab(index)
 
     def _close_other_tabs(self, keep_index: int):
         """Close all tabs except the specified one."""
         active_count = self._get_active_session_count()
         tab_to_keep = self.tab_widget.widget(keep_index)
-        keep_is_active = isinstance(tab_to_keep, TerminalTab) and tab_to_keep.is_connected()
+        keep_is_active = isinstance(tab_to_keep, (TerminalTab, LocalTerminalTab)) and tab_to_keep.is_connected()
         other_active = active_count - (1 if keep_is_active else 0)
 
         if other_active > 0:
@@ -644,7 +733,7 @@ class MainWindow(QMainWindow):
         for i in range(self.tab_widget.count() - 1, -1, -1):
             if i != keep_index:
                 tab = self.tab_widget.widget(i)
-                if isinstance(tab, TerminalTab):
+                if isinstance(tab, (TerminalTab, LocalTerminalTab)):
                     tab.disconnect()
                 self.tab_widget.removeTab(i)
 
@@ -658,7 +747,7 @@ class MainWindow(QMainWindow):
         active_count = 0
         for i in range(index + 1, self.tab_widget.count()):
             tab = self.tab_widget.widget(i)
-            if isinstance(tab, TerminalTab) and tab.is_connected():
+            if isinstance(tab, (TerminalTab, LocalTerminalTab)) and tab.is_connected():
                 active_count += 1
 
         if active_count > 0:
@@ -676,7 +765,7 @@ class MainWindow(QMainWindow):
         # Close from end to avoid index shifting
         for i in range(self.tab_widget.count() - 1, index, -1):
             tab = self.tab_widget.widget(i)
-            if isinstance(tab, TerminalTab):
+            if isinstance(tab, (TerminalTab, LocalTerminalTab)):
                 tab.disconnect()
             self.tab_widget.removeTab(i)
 
@@ -702,7 +791,7 @@ class MainWindow(QMainWindow):
         # Close all tabs
         while self.tab_widget.count() > 0:
             tab = self.tab_widget.widget(0)
-            if isinstance(tab, TerminalTab):
+            if isinstance(tab, (TerminalTab, LocalTerminalTab)):
                 tab.disconnect()
             self.tab_widget.removeTab(0)
 
@@ -741,7 +830,7 @@ class MainWindow(QMainWindow):
         # Disconnect all tabs
         for i in range(self.tab_widget.count()):
             tab = self.tab_widget.widget(i)
-            if isinstance(tab, TerminalTab):
+            if isinstance(tab, (TerminalTab, LocalTerminalTab)):
                 tab.disconnect()
 
         self.session_store.close()
@@ -779,6 +868,40 @@ class TerminalWindow(QMainWindow):
                 "Close Window",
                 f"'{self.tab.session.name}' has an active connection.\n\n"
                 "Disconnect and close?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+
+        self.tab.disconnect()
+        event.accept()
+
+
+class LocalTerminalWindow(QMainWindow):
+    """Standalone window for local terminal sessions."""
+
+    def __init__(self, name: str, session: LocalTerminal, theme: Theme):
+        super().__init__()
+        self.setWindowTitle(f"{name} - Local")
+        self.resize(1000, 700)
+
+        self.setStyleSheet(generate_stylesheet(theme))
+
+        self.tab = LocalTerminalTab(name, session)
+        self.tab.terminal.set_theme(theme)
+        self.setCentralWidget(self.tab)
+
+        self.tab.connect()
+
+    def closeEvent(self, event):
+        """Terminate on close with confirmation."""
+        if self.tab.is_connected():
+            reply = QMessageBox.question(
+                self,
+                "Close Window",
+                f"'{self.tab.name}' is still running.\n\nTerminate and close?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No
             )

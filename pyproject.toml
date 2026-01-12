@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ntermqt"
-version = "0.1.1"
+version = "0.1.2"
 description = "Modern SSH terminal widget for PyQt6 with credential vault and jump host support"
 readme = "README.md"
 license = {text = "GPL-3.0"}
@@ -30,11 +30,17 @@ dependencies = [
     "paramiko>=3.0.0",
     "cryptography>=41.0.0",
     "pyyaml>=6.0",
+    "click>=8.0.0",
+    # Platform-specific PTY support
+    "pexpect>=4.8.0; sys_platform != 'win32'",
+    "pywinpty>=2.0.0; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
 keyring = ["keyring>=24.0.0"]
-dev = ["pytest", "black", "pyinstaller", "build", "twine"]
+scripting = ["ipython>=8.0.0"]
+dev = ["pytest", "black", "pyinstaller", "build", "twine", "ipython>=8.0.0"]
+all = ["keyring>=24.0.0", "ipython>=8.0.0"]
 
 [project.urls]
 Homepage = "https://github.com/scottpeterman/nterm"
@@ -43,6 +49,7 @@ Issues = "https://github.com/scottpeterman/nterm/issues"
 
 [project.scripts]
 nterm = "nterm.__main__:main"
+nterm-cli = "nterm.scripting.cli:main"
 
 [project.gui-scripts]
 nterm-gui = "nterm.__main__:main"
