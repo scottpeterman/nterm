@@ -295,7 +295,7 @@ class CredentialStore:
         
         # Encrypt sensitive fields
         password_enc = self._encrypt(password) if password else None
-        ssh_key_enc = self._encrypt(ssh_key) if ssh_key else None
+        ssh_key_enc = self._encrypt(ssh_key.strip()) if ssh_key else None
         ssh_key_pass_enc = self._encrypt(ssh_key_passphrase) if ssh_key_passphrase else None
         
         # Serialize lists
@@ -523,8 +523,8 @@ class CredentialStore:
             updates['password_enc'] = self._encrypt(kwargs['password']) if kwargs['password'] else None
         
         if 'ssh_key' in kwargs:
-            updates['ssh_key_enc'] = self._encrypt(kwargs['ssh_key']) if kwargs['ssh_key'] else None
-        
+            updates['ssh_key_enc'] = self._encrypt(kwargs['ssh_key'].strip()) if kwargs['ssh_key'] else None
+
         if 'ssh_key_passphrase' in kwargs:
             updates['ssh_key_passphrase_enc'] = self._encrypt(kwargs['ssh_key_passphrase']) if kwargs['ssh_key_passphrase'] else None
         

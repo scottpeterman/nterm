@@ -565,6 +565,50 @@ class Theme:
         )
 
     @classmethod
+    def nord_hybrid(cls) -> Theme:
+        """
+        Nord Hybrid theme.
+
+        Polar Night UI + Snow Storm terminal.
+        Dark chrome, soft light terminal (not harsh white).
+        """
+        return cls(
+            name="nord_hybrid",
+            terminal_colors={
+                "background": "#eceff4",
+                "foreground": "#2e3440",
+                "cursor": "#2e3440",
+                "cursorAccent": "#eceff4",
+                "selectionBackground": "#d8dee9",
+                "selectionForeground": "#2e3440",
+                "black": "#2e3440",
+                "red": "#bf616a",
+                "green": "#a3be8c",
+                "yellow": "#d08770",
+                "blue": "#5e81ac",
+                "magenta": "#b48ead",
+                "cyan": "#88c0d0",
+                "white": "#d8dee9",
+                "brightBlack": "#4c566a",
+                "brightRed": "#bf616a",
+                "brightGreen": "#a3be8c",
+                "brightYellow": "#ebcb8b",
+                "brightBlue": "#81a1c1",
+                "brightMagenta": "#b48ead",
+                "brightCyan": "#8fbcbb",
+                "brightWhite": "#eceff4",
+            },
+            font_family="JetBrains Mono, Cascadia Code, Consolas, Menlo, monospace",
+            font_size=14,
+            background_color="#2e3440",
+            foreground_color="#d8dee9",
+            border_color="#3b4252",
+            accent_color="#88c0d0",
+            overlay_background="rgba(46, 52, 64, 0.95)",
+            overlay_text_color="#eceff4",
+        )
+
+    @classmethod
     def gruvbox_hybrid(cls) -> Theme:
         """
         Gruvbox Hybrid theme.
@@ -630,6 +674,7 @@ class ThemeEngine:
         self._themes["default"] = Theme.default()
         self._themes["dracula"] = Theme.dracula()
         self._themes["nord"] = Theme.nord()
+        self._themes["nord_hybrid"] = Theme.nord_hybrid()
         self._themes["solarized_dark"] = Theme.solarized_dark()
         self._themes["gruvbox_dark"] = Theme.gruvbox_dark()
         self._themes["gruvbox_light"] = Theme.gruvbox_light()

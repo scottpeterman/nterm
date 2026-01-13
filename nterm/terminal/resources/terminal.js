@@ -125,6 +125,12 @@
         contextMenu = document.getElementById('context-menu');
         const container = document.getElementById('terminal');
 
+        document.getElementById('ctx-capture').addEventListener('click', () => {
+            contextMenu.classList.remove('visible');
+            if (bridge) {
+                bridge.onCaptureToggle();
+            }
+        });
         // Show context menu on right-click
         container.addEventListener('contextmenu', (e) => {
             e.preventDefault();
@@ -274,7 +280,14 @@
     function setupBridge() {
         new QWebChannel(qt.webChannelTransport, function(channel) {
             bridge = channel.objects.bridge;
-
+            bridge.set_capture_state.connect(function(isCapturing, filename) {
+                const captureText = document.getElementById('ctx-capture-text');
+                if (isCapturing) {
+                    captureText.textContent = 'Stop Capture (' + filename + ')';
+                } else {
+                    captureText.textContent = 'Start Capture...';
+                }
+            });
             // Data from Python to terminal - properly decode UTF-8
             bridge.write_data.connect(function(dataB64) {
                 try {

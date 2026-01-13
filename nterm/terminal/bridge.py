@@ -38,6 +38,16 @@ class TerminalBridge(QObject):
     paste_requested = pyqtSignal(str)      # base64 clipboard content for confirmation
     paste_confirmed = pyqtSignal()         # user confirmed multiline paste
     paste_cancelled = pyqtSignal()         # user cancelled multiline paste
+    # Signal to JS (Python -> JavaScript)
+    set_capture_state = pyqtSignal(bool, str)  # is_capturing, filename
+
+    # Signal from JS (JavaScript -> Python)
+    capture_toggled = pyqtSignal()
+
+    @pyqtSlot()
+    def onCaptureToggle(self):
+        """Called from JS when capture menu item clicked."""
+        self.capture_toggled.emit()
 
     def __init__(self):
         super().__init__()

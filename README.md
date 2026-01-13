@@ -14,9 +14,11 @@ Built for managing hundreds of devices through bastion hosts with hardware secur
 
 **Terminal**
 - xterm.js rendering via QWebEngineView — full VT100/ANSI support
-- Built-in themes: Catppuccin, Dracula, Nord, Solarized, Gruvbox (dark/light/hybrid)
+- 12 built-in themes: Catppuccin, Dracula, Nord, Solarized, Gruvbox, Enterprise variants
+- Hybrid themes: dark UI chrome with light terminal for readability
 - Custom YAML themes with independent terminal and UI colors
 - Tab or window per session — pop sessions to separate windows
+- Session capture to file (clean text, ANSI stripped)
 - Unicode, emoji, box-drawing characters
 
 **Authentication**
@@ -261,19 +263,33 @@ session.connect()
 
 ## Themes
 
-### Built-in
+nterm includes 12 built-in themes covering dark, light, and hybrid styles.
+
+### Built-in Themes
 
 ```python
-Theme.default()         # Catppuccin Mocha
-Theme.dracula()         # Dracula
-Theme.nord()            # Nord
-Theme.solarized_dark()  # Solarized Dark
-Theme.gruvbox_dark()    # Gruvbox Dark
-Theme.gruvbox_light()   # Gruvbox Light
-Theme.gruvbox_hybrid()  # Dark UI + Light terminal
+# Dark themes
+Theme.default()           # Catppuccin Mocha
+Theme.dracula()           # Dracula
+Theme.nord()              # Nord
+Theme.solarized_dark()    # Solarized Dark
+Theme.gruvbox_dark()      # Gruvbox Dark
+Theme.enterprise_dark()   # Microsoft-inspired dark
+
+# Light themes
+Theme.gruvbox_light()     # Gruvbox Light
+Theme.enterprise_light()  # Microsoft-inspired light
+Theme.clean()             # Warm paper tones
+
+# Hybrid themes (dark UI + light terminal)
+Theme.gruvbox_hybrid()    # Gruvbox dark chrome, light terminal
+Theme.nord_hybrid()       # Nord polar night chrome, snow storm terminal
+Theme.enterprise_hybrid() # VS Code-style dark/light split
 ```
 
-### Custom YAML
+**Hybrid themes** combine a dark application chrome (menus, tabs, sidebars) with a light terminal for maximum readability — ideal for long sessions reviewing configs or logs.
+
+### Custom YAML Themes
 
 ```yaml
 # ~/.nterm/themes/my-theme.yaml
@@ -299,6 +315,19 @@ foreground_color: "#c0caf5"
 border_color: "#33467c"
 accent_color: "#7aa2f7"
 ```
+
+---
+
+## Session Capture
+
+Capture session output to a file for documentation, auditing, or extracting config snippets.
+
+**Right-click in terminal → Start Capture...** to begin recording. Output is saved as clean text with ANSI escape sequences stripped — ready for grep, diff, or pasting into tickets.
+
+- Per-session capture (each tab independent)
+- File dialog for save location
+- Menu shows active capture filename
+- Auto-stops when session closes
 
 ---
 

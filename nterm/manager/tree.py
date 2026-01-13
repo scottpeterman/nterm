@@ -26,121 +26,140 @@ class ItemType(Enum):
     SESSION = auto()
 
 
+class DragDropTreeWidget(QTreeWidget):
+    """
+    QTreeWidget subclass that emits a signal after internal drag-drop operations.
+    """
+
+    items_moved = pyqtSignal()  # Emitted after a drop completes
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def dropEvent(self, event):
+        """Handle drop - let Qt do the visual move, then signal for persistence."""
+        # Let Qt handle the visual rearrangement
+        super().dropEvent(event)
+        # Signal that items have moved and need persistence
+        self.items_moved.emit()
+
+
 class SessionTreeWidget(QWidget):
     """
     Tree-based session browser with filtering.
-    
+
     Signals:
         connect_requested(session, mode): Emitted when user wants to connect
         session_selected(session): Emitted when selection changes
     """
-    
+
     # Connect modes
     MODE_TAB = "tab"
     MODE_WINDOW = "window"
     MODE_QUICK = "quick"
-    
+
     # Signals
     connect_requested = pyqtSignal(object, str)  # (SavedSession, mode)
     session_selected = pyqtSignal(object)  # SavedSession or None
     quick_connect_requested = pyqtSignal()  # For quick connect dialog
-    
+
     def __init__(self, store: SessionStore = None, parent: QWidget = None):
         super().__init__(parent)
         self.store = store or SessionStore()
-        
+
         self._filter_timer = QTimer()
         self._filter_timer.setSingleShot(True)
         self._filter_timer.timeout.connect(self._apply_filter)
-        
+
         self._setup_ui()
         self.refresh()
-    
+
     def _setup_ui(self) -> None:
         """Build the UI."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        
+
         # Toolbar row
         toolbar = QHBoxLayout()
         toolbar.setSpacing(4)
-        
+
         # Filter input
         self._filter_input = QLineEdit()
         self._filter_input.setPlaceholderText("Filter sessions...")
         self._filter_input.setClearButtonEnabled(True)
         self._filter_input.textChanged.connect(self._on_filter_changed)
         toolbar.addWidget(self._filter_input, 1)
-        
+
         # Quick connect button
         self._quick_btn = QPushButton("Quick Connect")
         self._quick_btn.clicked.connect(self.quick_connect_requested.emit)
         toolbar.addWidget(self._quick_btn)
-        
+
         layout.addLayout(toolbar)
-        
-        # Tree widget
-        self._tree = QTreeWidget()
+
+        # Tree widget (using our custom subclass)
+        self._tree = DragDropTreeWidget()
         self._tree.setHeaderHidden(True)
         self._tree.setRootIsDecorated(True)
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self._tree.setAnimated(True)
-        
+
         # Signals
         self._tree.itemDoubleClicked.connect(self._on_double_click)
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
         self._tree.customContextMenuRequested.connect(self._show_context_menu)
         self._tree.itemExpanded.connect(self._on_item_expanded)
         self._tree.itemCollapsed.connect(self._on_item_collapsed)
-        
+        self._tree.items_moved.connect(self._persist_tree_state)  # Handle drag-drop
+
         layout.addWidget(self._tree)
-        
+
         # Action buttons row
         btn_row = QHBoxLayout()
         btn_row.setSpacing(4)
-        
+
         self._connect_tab_btn = QPushButton("Connect")
         self._connect_tab_btn.setToolTip("Connect in new tab")
         self._connect_tab_btn.clicked.connect(lambda: self._connect_selected(self.MODE_TAB))
         self._connect_tab_btn.setEnabled(False)
         btn_row.addWidget(self._connect_tab_btn)
-        
+
         self._connect_win_btn = QPushButton("New")
         self._connect_win_btn.setToolTip("Connect in separate window")
         self._connect_win_btn.clicked.connect(lambda: self._connect_selected(self.MODE_WINDOW))
         self._connect_win_btn.setEnabled(False)
         btn_row.addWidget(self._connect_win_btn)
-        
+
         btn_row.addStretch()
-        
+
         self._add_btn = QPushButton("+")
         self._add_btn.setFixedWidth(32)
         self._add_btn.setToolTip("Add session or folder")
         self._add_btn.clicked.connect(self._show_add_menu)
         btn_row.addWidget(self._add_btn)
-        
+
         layout.addLayout(btn_row)
-    
+
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
-    
+
     def refresh(self) -> None:
         """Reload tree from store."""
         self._tree.clear()
         tree_data = self.store.get_tree()
-        
+
         # Build folder lookup
         folder_items: dict[int, QTreeWidgetItem] = {}
-        
+
         # First pass: create all folder items
         for folder in tree_data["folders"]:
             item = self._create_folder_item(folder)
             folder_items[folder.id] = item
-        
+
         # Second pass: parent folders correctly
         for folder in tree_data["folders"]:
             item = folder_items[folder.id]
@@ -148,10 +167,10 @@ class SessionTreeWidget(QWidget):
                 folder_items[folder.parent_id].addChild(item)
             else:
                 self._tree.addTopLevelItem(item)
-            
+
             # Restore expanded state
             item.setExpanded(folder.expanded)
-        
+
         # Add sessions
         for session in tree_data["sessions"]:
             item = self._create_session_item(session)
@@ -159,9 +178,9 @@ class SessionTreeWidget(QWidget):
                 folder_items[session.folder_id].addChild(item)
             else:
                 self._tree.addTopLevelItem(item)
-        
+
         self._apply_filter()
-    
+
     def get_selected_session(self) -> Optional[SavedSession]:
         """Get currently selected session, or None."""
         items = self._tree.selectedItems()
@@ -172,17 +191,17 @@ class SessionTreeWidget(QWidget):
             session_id = item.data(0, ROLE_ITEM_ID)
             return self.store.get_session(session_id)
         return None
-    
+
     def select_session(self, session_id: int) -> None:
         """Select a session by ID."""
         item = self._find_session_item(session_id)
         if item:
             self._tree.setCurrentItem(item)
-    
+
     # -------------------------------------------------------------------------
     # Item creation
     # -------------------------------------------------------------------------
-    
+
     def _create_folder_item(self, folder: SessionFolder) -> QTreeWidgetItem:
         """Create tree item for a folder."""
         item = QTreeWidgetItem()
@@ -190,31 +209,32 @@ class SessionTreeWidget(QWidget):
         item.setData(0, ROLE_ITEM_TYPE, ItemType.FOLDER)
         item.setData(0, ROLE_ITEM_ID, folder.id)
         item.setFlags(
-            item.flags() | 
+            item.flags() |
+            Qt.ItemFlag.ItemIsDragEnabled |  # Folders can be dragged too
             Qt.ItemFlag.ItemIsDropEnabled
         )
         return item
-    
+
     def _create_session_item(self, session: SavedSession) -> QTreeWidgetItem:
         """Create tree item for a session."""
         item = QTreeWidgetItem()
-        
+
         # Display text
         display = f"🖥 {session.name}"
         if session.description:
             display += f"  ({session.description})"
         item.setText(0, display)
         item.setToolTip(0, f"{session.hostname}:{session.port}")
-        
+
         item.setData(0, ROLE_ITEM_TYPE, ItemType.SESSION)
         item.setData(0, ROLE_ITEM_ID, session.id)
         item.setFlags(
-            item.flags() | 
+            item.flags() |
             Qt.ItemFlag.ItemIsDragEnabled |
             Qt.ItemFlag.ItemNeverHasChildren
         )
         return item
-    
+
     def _find_session_item(self, session_id: int) -> Optional[QTreeWidgetItem]:
         """Find tree item for a session ID."""
         iterator = self._tree_iterator()
@@ -223,7 +243,7 @@ class SessionTreeWidget(QWidget):
                 item.data(0, ROLE_ITEM_ID) == session_id):
                 return item
         return None
-    
+
     def _tree_iterator(self):
         """Iterate all items in tree."""
         def recurse(parent):
@@ -231,11 +251,74 @@ class SessionTreeWidget(QWidget):
                 child = parent.child(i)
                 yield child
                 yield from recurse(child)
-        
+
         for i in range(self._tree.topLevelItemCount()):
             item = self._tree.topLevelItem(i)
             yield item
             yield from recurse(item)
+
+    # -------------------------------------------------------------------------
+    # Drag-drop persistence
+    # -------------------------------------------------------------------------
+
+    def _persist_tree_state(self) -> None:
+        """
+        Persist the current tree state to the store after drag-drop.
+
+        Walks the visual tree and updates folder_id/parent_id and positions
+        to match the current visual arrangement.
+        """
+        def get_folder_id_for_item(item: QTreeWidgetItem) -> Optional[int]:
+            """Get the folder ID that contains this item, or None for root."""
+            parent = item.parent()
+            if parent is None:
+                return None
+            # Parent should be a folder
+            if parent.data(0, ROLE_ITEM_TYPE) == ItemType.FOLDER:
+                return parent.data(0, ROLE_ITEM_ID)
+            return None
+
+        def process_children(parent_item, parent_folder_id: Optional[int]) -> None:
+            """Process all children of a parent (either root or folder)."""
+            if parent_item is None:
+                # Processing root level
+                count = self._tree.topLevelItemCount()
+                for pos in range(count):
+                    item = self._tree.topLevelItem(pos)
+                    process_item(item, None, pos)
+            else:
+                # Processing folder children
+                count = parent_item.childCount()
+                for pos in range(count):
+                    item = parent_item.child(pos)
+                    process_item(item, parent_folder_id, pos)
+
+        def process_item(item: QTreeWidgetItem, parent_folder_id: Optional[int], position: int) -> None:
+            """Process a single item - update its position and parent."""
+            item_type = item.data(0, ROLE_ITEM_TYPE)
+            item_id = item.data(0, ROLE_ITEM_ID)
+
+            if item_type == ItemType.SESSION:
+                # Update session's folder and position
+                session = self.store.get_session(item_id)
+                if session and (session.folder_id != parent_folder_id or session.position != position):
+                    session.folder_id = parent_folder_id
+                    session.position = position
+                    self.store.update_session(session)
+
+            elif item_type == ItemType.FOLDER:
+                # Update folder's parent and position
+                folder = self.store.get_folder(item_id)
+                if folder and (folder.parent_id != parent_folder_id or folder.position != position):
+                    folder.parent_id = parent_folder_id
+                    folder.position = position
+                    self.store.update_folder(folder)
+
+                # Recursively process folder's children
+                process_children(item, item_id)
+
+        # Start processing from root level
+        process_children(None, None)
     
     # -------------------------------------------------------------------------
     # Filtering

@@ -32,22 +32,12 @@ Version 1.0 shipped — tracking issues and features for v1.1+
 ### Pop-out Window Close Warning — Done (Bonus)
 - Standalone terminal windows now warn before closing active sessions
 
----
-
-## P1: Session Logging
-
-Network engineers need audit trails.
-
-### Record Session to File
-- **Issue**: No way to capture session output to log file
-- **Expected**: Per-session toggle or connection profile option
-- **Options**:
-  - Raw output (with ANSI escapes)
-  - Stripped plaintext
-  - Timestamped format: `[2025-01-11 14:32:01] show ip route`
-- **UI**: Session menu → "Start Recording..." / "Stop Recording"
-- **Profile option**: `log_file: ~/logs/{hostname}_{timestamp}.log`
-- **Scope**: Tap the PTY output stream before terminal rendering
+### Session Logging (P1) — Done
+- Right-click terminal → Start Capture... / Stop Capture
+- File dialog for save location
+- Clean text output (ANSI escapes stripped)
+- State reflected in context menu
+- Capture stops automatically on session detach
 
 ---
 
@@ -134,15 +124,15 @@ profiles:
 ## P1: Distribution
 
 ### PyInstaller Builds
-- **Platforms**: Windows x64, macOS (Intel + ARM), Linux x64
+- **Platforms**: Windows x64 (priority), macOS (Intel + ARM), Linux x64 (last)
 - **Challenges**:
   - PyQt6 + WebEngine is heavy (~150MB+)
   - xterm.js assets need bundled
   - Keyring backends vary by platform
 - **Deliverables**:
-  - Windows: `.exe` installer or portable zip
-  - macOS: `.app` bundle (maybe `.dmg`)
-  - Linux: AppImage or portable tarball
+  - Windows: `.exe` installer or portable zip (first)
+  - macOS: `.app` bundle (maybe `.dmg`) (second)
+  - Linux: AppImage or portable tarball (last)
 - **CI**: GitHub Actions workflow for release builds
 
 ---
@@ -213,21 +203,24 @@ Week 1: ✅ DONE
 ├── Tab context menu (bonus) ✅
 └── Window close warning (bonus) ✅
 
-Week 2: Session Logging
-└── Record to file (P1) — high value for network eng workflows
+Week 2: ✅ DONE
+└── Session capture/logging (P1) ✅
 
-Week 3: Crypto Profiles
+Week 3: Distribution - Windows
+└── PyInstaller Windows build (P1) — priority platform
+
+Week 4: Distribution - macOS
+└── PyInstaller macOS build (P1) — Intel + ARM universal
+
+Week 5: Crypto Profiles
 ├── CryptoConfig dataclass + presets (P1)
 ├── Connection dialog dropdown (P1)
 └── Profile YAML schema update (P1)
 
-Week 4: Distribution
-└── PyInstaller builds (P1) — unlocks non-dev users
-
-Week 5: Polish
+Week 6: Polish + Linux
 ├── Per-session themes (P2)
 ├── Help/shortcuts modal (P2)
-├── Custom crypto UI (P2) — phase 2 of crypto profiles
+├── PyInstaller Linux build (P1) — last priority
 └── Broadcast mode (P2) — scope carefully, can be complex
 ```
 
@@ -236,13 +229,19 @@ Week 5: Polish
 ## Notes
 
 - ~~Tab management fixes are mostly Qt boilerplate — fast wins~~ ✅ Done
-- Session logging architecture matters: design for future features (search, replay)
+- ~~Session logging architecture matters: design for future features~~ ✅ Done — clean text capture via widget
 - Broadcast mode is powerful but dangerous — invest in safety UX
 - PyInstaller will surface hidden dependencies — budget debug time
+- Windows build first gets broadest user coverage
 
 ---
 
 ## Changelog
+
+**2025-01-12**: Completed P1 session logging
+- Right-click context menu capture toggle
+- Clean text output (ANSI stripped)
+- Auto-stop on session detach
 
 **2025-01-11**: Completed all P0 session safety and P1 tab management items
 - Tab close confirmation for active sessions

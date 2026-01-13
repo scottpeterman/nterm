@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ntermqt"
-version = "0.1.2"
+version = "0.1.4"
 description = "Modern SSH terminal widget for PyQt6 with credential vault and jump host support"
 readme = "README.md"
 license = {text = "GPL-3.0"}

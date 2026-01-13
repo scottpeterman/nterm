@@ -6,11 +6,12 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, BinaryIO
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QApplication
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QApplication, QFileDialog
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
 from PyQt6.QtWebChannel import QWebChannel
@@ -28,6 +29,9 @@ from nterm.resources import resources
 
 # Default threshold for multiline paste warning
 MULTILINE_PASTE_THRESHOLD = 1
+
+# ANSI escape sequence pattern for stripping from capture logs
+ANSI_ESCAPE = re.compile(rb'\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07|\x1b\[[\?0-9;]*[hl]')
 
 
 class TerminalWidget(QWidget):
@@ -54,6 +58,10 @@ class TerminalWidget(QWidget):
         self._awaiting_reconnect_confirm = False
         self._multiline_threshold = multiline_threshold
         self._pending_paste: Optional[bytes] = None  # held during confirmation
+
+        # Session capture
+        self._capture_file: Optional[BinaryIO] = None
+        self._capture_path: Optional[Path] = None
 
         self._setup_ui()
         self._setup_bridge()
@@ -99,6 +107,9 @@ class TerminalWidget(QWidget):
         self._bridge.paste_confirmed.connect(self._on_paste_confirmed)
         self._bridge.paste_cancelled.connect(self._on_paste_cancelled)
 
+        # Capture signals
+        self._bridge.capture_toggled.connect(self._on_capture_toggle)
+
         # Load terminal HTML
         try:
             html_path = resources.get_path("terminal", "resources", "terminal.html")
@@ -130,6 +141,9 @@ class TerminalWidget(QWidget):
             self._awaiting_reconnect_confirm = False
             logger.debug("Detached session")
 
+        # Stop any active capture
+        self.stop_capture()
+
     def set_theme(self, theme: Theme) -> None:
         """
         Apply theme to terminal.
@@ -157,6 +171,11 @@ class TerminalWidget(QWidget):
         Args:
             data: Bytes to display
         """
+        # Session capture - strip ANSI escapes for clean text
+        if self._capture_file:
+            clean = ANSI_ESCAPE.sub(b'', data)
+            self._capture_file.write(clean)
+
         if self._ready:
             data_b64 = base64.b64encode(data).decode('ascii')
             self._bridge.write_data.emit(data_b64)
@@ -189,6 +208,58 @@ class TerminalWidget(QWidget):
         """Hide overlay message."""
         if self._ready:
             self._bridge.hide_overlay.emit()
+
+    # -------------------------------------------------------------------------
+    # Session capture
+    # -------------------------------------------------------------------------
+
+    @property
+    def is_capturing(self) -> bool:
+        """Check if session capture is active."""
+        return self._capture_file is not None
+
+    def start_capture(self, path: Path) -> None:
+        """
+        Start capturing session output to file.
+
+        Args:
+            path: File path to write captured output
+        """
+        self.stop_capture()  # Close any existing capture
+        self._capture_path = path
+        self._capture_file = open(path, 'wb')
+        self._bridge.set_capture_state.emit(True, path.name)
+        logger.info(f"Started capture: {path}")
+
+    def stop_capture(self) -> None:
+        """Stop capturing session output."""
+        if self._capture_file:
+            self._capture_file.close()
+            logger.info(f"Stopped capture: {self._capture_path}")
+            self._capture_file = None
+            self._capture_path = None
+        self._bridge.set_capture_state.emit(False, "")
+
+    @pyqtSlot()
+    def _on_capture_toggle(self):
+        """Handle capture menu item click."""
+        if self._capture_file:
+            self.stop_capture()
+        else:
+            # Show file save dialog
+            default_name = "session.log"
+            if self._session:
+                # Use hostname if available for default filename
+                default_name = f"session_{self._session.hostname}.log" if hasattr(self._session, 'hostname') else "session.log"
+
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Session Capture",
+                str(Path.home() / default_name),
+                "Log Files (*.log *.txt);;All Files (*)"
+            )
+            if path:
+                self.start_capture(Path(path))
 
     # -------------------------------------------------------------------------
     # Clipboard operations
