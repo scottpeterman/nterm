@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 IPYTHON_STARTUP = '''
 from nterm.scripting import api
 print("\\n\\033[1;36mnterm API loaded.\\033[0m")
+print("  api.repl()         _ Start CLI/repl")
 print("  api.devices()      - List saved devices")
 print("  api.search(query)  - Search devices")  
 print("  api.credentials()  - List credentials (after api.unlock())")

@@ -15,11 +15,6 @@ Quick Start (IPython):
     api.credentials()              # List credentials
 
     api.help()                     # Show all commands
-
-Quick Start (CLI):
-    nterm-cli devices
-    nterm-cli search leaf
-    nterm-cli credentials --unlock
 """
 
 from .api import (
@@ -29,9 +24,14 @@ from .api import (
     get_api,
     reset_api,
 )
+from nterm.scripting.repl import REPLPolicy, NTermREPL
+from nterm.scripting.repl_interactive import add_repl_to_api
 
 # Convenience: pre-instantiated API
-api = get_api()
+api = get_api()  # <-- This FIRST
+
+# Make api.repl() available
+add_repl_to_api(api)  # <-- Then this
 
 __all__ = [
     "NTermAPI",
@@ -40,4 +40,6 @@ __all__ = [
     "get_api",
     "reset_api",
     "api",
+    'REPLPolicy',
+    'NTermREPL'
 ]

@@ -66,6 +66,8 @@ nterm includes a built-in development console accessible via **Dev → IPython**
 
 ![IPython Console](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/ipython.png)
 
+![IPython Console](https://raw.githubusercontent.com/scottpeterman/nterm/main/screenshots/repl.png)
+
 The IPython console runs in the same Python environment as nterm, with the scripting API pre-loaded. Query your device inventory, inspect credentials, and prototype automation workflows without leaving the app.
 
 ```python
