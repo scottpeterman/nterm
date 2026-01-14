@@ -20,6 +20,8 @@ from nterm.manager import (
     SessionTreeWidget, SessionStore, SavedSession, QuickConnectDialog,
     SettingsDialog, ExportDialog, ImportDialog, ImportTerminalTelemetryDialog
 )
+from nterm.parser.ntc_download_dialog import NTCDownloadDialog
+from nterm.parser.api_help_dialog import APIHelpDialog
 from nterm.terminal.widget import TerminalWidget
 from nterm.session.ssh import SSHSession
 from nterm.session.local_terminal import LocalTerminal
@@ -457,6 +459,25 @@ class MainWindow(QMainWindow):
         shell_window_action.triggered.connect(lambda: self._open_local("Shell", LocalTerminal(), "window"))
         shell_menu.addAction(shell_window_action)
 
+        # Separator before tools
+        dev_menu.addSeparator()
+
+        # Download NTC Templates
+        download_templates_action = QAction("Download &NTC Templates...", self)
+        download_templates_action.triggered.connect(self._on_download_ntc_templates)
+        dev_menu.addAction(download_templates_action)
+
+        # TextFSM Template Tester
+        template_tester_action = QAction("TextFSM &Template Tester...", self)
+        template_tester_action.triggered.connect(self._on_textfsm_tester)
+        dev_menu.addAction(template_tester_action)
+
+        # API Help
+        api_help_action = QAction("&API Help...", self)
+        api_help_action.setShortcut(QKeySequence("F1"))
+        api_help_action.triggered.connect(self._on_api_help)
+        dev_menu.addAction(api_help_action)
+
     def _on_import_sessions(self):
         """Show import dialog."""
         dialog = ImportDialog(self.session_store, self)
@@ -473,6 +494,33 @@ class MainWindow(QMainWindow):
         dialog = ImportTerminalTelemetryDialog(self.session_store, self)
         if dialog.exec():
             self.session_tree.refresh()
+
+    def _on_download_ntc_templates(self):
+        """Show NTC template download dialog."""
+        # Use the same db path as the TextFSM engine would use
+        db_path = Path.cwd() / "tfsm_templates.db"
+        dialog = NTCDownloadDialog(self, str(db_path))
+        dialog.exec()
+
+    def _on_textfsm_tester(self):
+        """Launch TextFSM Template Tester."""
+        import subprocess
+        import sys
+
+        # Launch as separate process
+        try:
+            subprocess.Popen([sys.executable, "-m", "nterm.parser.tfsm_fire_tester"])
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Launch Error",
+                f"Failed to launch TextFSM Template Tester:\n{e}"
+            )
+
+    def _on_api_help(self):
+        """Show API help dialog."""
+        dialog = APIHelpDialog(self)
+        dialog.exec()
 
     def _on_settings(self):
         """Show settings dialog."""
