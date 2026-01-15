@@ -219,12 +219,16 @@ class NTermREPL:
             if not self.state.api.vault_unlocked:
                 return self._err("Vault is locked. Run :unlock <password> first.")
 
-            # Single active session policy by default
             if self.state.session:
                 self._safe_disconnect()
 
             try:
-                sess = self.state.api.connect(device, credential=cred)
+                # Pass debug flag from REPL state
+                sess = self.state.api.connect(
+                    device,
+                    credential=cred,
+                    debug=self.state.debug_mode  # <-- This line
+                )
                 self.state.session = sess
                 self.state.connected_device = sess.device_name
 

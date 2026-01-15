@@ -835,21 +835,25 @@ class NTermAPI:
 
         return '\n'.join(cleaned_lines).strip()
 
-    def connect(self, device: str, credential: str = None) -> ActiveSession:
+    def connect(self, device: str, credential: str = None, debug: bool = False) -> ActiveSession:
         """
         Connect to a device and detect platform.
 
         Args:
             device: Device name (from saved sessions) or hostname
             credential: Optional credential name (auto-resolved if not specified)
+            debug: Enable verbose connection debugging
 
         Returns:
             ActiveSession handle for sending commands
-
-        Examples:
-            session = api.connect("spine1")
-            session = api.connect("192.168.1.1", credential="lab-admin")
         """
+        debug_log = []
+
+        def _debug(msg):
+            if debug:
+                debug_log.append(msg)
+                print(f"[DEBUG] {msg}")
+
         # Look up device from saved sessions first
         device_info = self.device(device)
 
@@ -859,21 +863,21 @@ class NTermAPI:
             device_name = device_info.name
             saved_cred = device_info.credential
         else:
-            # Treat as hostname directly
             hostname = device
             port = 22
             device_name = device
             saved_cred = None
 
+        _debug(f"Target: {hostname}:{port}")
+
         # Resolve credentials
         if not self.vault_unlocked:
             raise RuntimeError("Vault is locked. Call api.unlock(password) first.")
 
-        # Get credential - either specified or from saved session or auto-resolve
         cred_name = credential or saved_cred
+        _debug(f"Credential: {cred_name or '(auto-resolve)'}")
 
         if cred_name:
-            # User specified a credential name - use resolver's method
             try:
                 profile = self._resolver.create_profile_for_credential(
                     credential_name=cred_name,
@@ -883,7 +887,6 @@ class NTermAPI:
             except Exception as e:
                 raise ValueError(f"Failed to get credential '{cred_name}': {e}")
         else:
-            # Auto-resolve based on hostname patterns
             try:
                 profile = self._resolver.resolve_for_device(hostname, port=port)
             except Exception as e:
@@ -891,10 +894,6 @@ class NTermAPI:
 
         if not profile:
             raise ValueError(f"No credentials available for {hostname}")
-
-        # Create SSH client
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
         # Apply legacy algorithm support
         _apply_global_transport_settings()
@@ -909,24 +908,27 @@ class NTermAPI:
         }
 
         # Add authentication from profile
-        # ConnectionProfile has username in first auth method
+        auth_method_used = None
         if profile.auth_methods:
             first_auth = profile.auth_methods[0]
             connect_kwargs['username'] = first_auth.username
+            _debug(f"Username: {first_auth.username}")
 
-            # Try each auth method in order
             for auth in profile.auth_methods:
                 if auth.method == AuthMethod.PASSWORD:
                     connect_kwargs['password'] = auth.password
+                    auth_method_used = "password"
+                    _debug("Auth method: password")
                     break
                 elif auth.method == AuthMethod.KEY_FILE:
-                    connect_kwargs['key_filename'] = auth.key_file
+                    connect_kwargs['key_filename'] = auth.key_path
+                    if auth.key_passphrase:
+                        connect_kwargs['passphrase'] = auth.key_passphrase
+                    auth_method_used = f"key_file:{auth.key_path}"
+                    _debug(f"Auth method: key_file ({auth.key_path})")
                     break
                 elif auth.method == AuthMethod.KEY_STORED:
-                    # KEY_STORED has key data as string, need to write to temp file
                     import tempfile
-                    from io import StringIO
-
                     key_file = tempfile.NamedTemporaryFile(
                         mode='w',
                         delete=False,
@@ -934,42 +936,93 @@ class NTermAPI:
                     )
                     key_file.write(auth.key_data)
                     key_file.close()
-
                     connect_kwargs['key_filename'] = key_file.name
                     if auth.key_passphrase:
                         connect_kwargs['passphrase'] = auth.key_passphrase
+                    auth_method_used = "key_stored"
+                    _debug(f"Auth method: key_stored (temp: {key_file.name})")
                     break
 
-        try:
-            # Try connection with modern algorithms
-            client.connect(**connect_kwargs)
-        except paramiko.SSHException as e:
-            # If RSA SHA-1 issue, retry with disabled algorithms
-            if "rsa-sha2" in str(e).lower() or "server-sig-algs" in str(e).lower():
-                client.close()
-                client = paramiko.SSHClient()
-                client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # Detect key type if using key auth
+        if 'key_filename' in connect_kwargs:
+            key_path = connect_kwargs['key_filename']
+            key_type = "unknown"
+            key_bits = None
+            try:
+                key = paramiko.RSAKey.from_private_key_file(key_path)
+                key_type = "RSA"
+                key_bits = key.get_bits()
+            except:
+                try:
+                    key = paramiko.Ed25519Key.from_private_key_file(key_path)
+                    key_type = "Ed25519"
+                except:
+                    try:
+                        key = paramiko.ECDSAKey.from_private_key_file(key_path)
+                        key_type = "ECDSA"
+                    except:
+                        pass
+            _debug(f"Key type: {key_type}" + (f" ({key_bits} bits)" if key_bits else ""))
 
-                # Apply RSA SHA-1 fallback
+        # Connection attempt sequence
+        attempts = [
+            ("modern", None),
+            ("rsa-sha1", RSA_SHA1_DISABLED_ALGORITHMS),
+        ]
+
+        last_error = None
+        connected = False
+        client = None
+
+        for attempt_name, disabled_algs in attempts:
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+            _debug(f"Attempt: {attempt_name}")
+
+            attempt_kwargs = connect_kwargs.copy()
+            if disabled_algs:
+                attempt_kwargs['disabled_algorithms'] = disabled_algs
+                _debug(f"  disabled_algorithms: {disabled_algs}")
+
+            try:
+                client.connect(**attempt_kwargs)
+                connected = True
+
+                # Log successful negotiation
                 transport = client.get_transport()
                 if transport:
-                    transport.get_security_options().digests = tuple(
-                        alg for alg in transport.get_security_options().digests
-                        if alg not in RSA_SHA1_DISABLED_ALGORITHMS
-                    )
+                    _debug(f"  SUCCESS - cipher: {transport.remote_cipher}, mac: {transport.remote_mac}")
+                    _debug(f"  host_key_type: {transport.host_key_type}")
+                break
 
-                client.connect(**connect_kwargs)
-            else:
-                raise
+            except paramiko.AuthenticationException as e:
+                _debug(f"  FAILED (auth): {e}")
+                last_error = str(e)
+                client.close()
+            except paramiko.SSHException as e:
+                _debug(f"  FAILED (ssh): {e}")
+                last_error = str(e)
+                client.close()
+            except Exception as e:
+                _debug(f"  FAILED (other): {e}")
+                last_error = str(e)
+                client.close()
+
+        if not connected:
+            # Build detailed error message
+            error_detail = f"Connection failed: {last_error}"
+            if debug:
+                error_detail += f"\n\nDebug log:\n" + "\n".join(debug_log)
+            raise paramiko.AuthenticationException(error_detail)
 
         # Open interactive shell
         shell = client.invoke_shell(width=200, height=50)
         shell.settimeout(0.5)
 
-        # Wait for initial prompt
         prompt = self._wait_for_prompt(shell)
+        _debug(f"Prompt detected: {prompt}")
 
-        # Create session object
         session = ActiveSession(
             device_name=device_name,
             hostname=hostname,
@@ -984,10 +1037,11 @@ class NTermAPI:
             version_output = self._send_command(shell, "show version", prompt)
             platform = self._detect_platform(version_output)
             session.platform = platform
+            _debug(f"Platform detected: {platform}")
         except Exception as e:
-            print(f"Warning: Failed to detect platform: {e}")
+            _debug(f"Platform detection failed: {e}")
 
-        # Disable terminal paging for cleaner output
+        # Disable terminal paging
         try:
             if session.platform and 'cisco' in session.platform:
                 self._send_command(shell, "terminal length 0", prompt, timeout=5)
@@ -996,11 +1050,9 @@ class NTermAPI:
             elif session.platform == 'arista_eos':
                 self._send_command(shell, "terminal length 0", prompt, timeout=5)
         except Exception as e:
-            print(f"Warning: Failed to disable paging: {e}")
+            _debug(f"Failed to disable paging: {e}")
 
-        # Track active session
         self._active_sessions[device_name] = session
-
         return session
 
     def send(
