@@ -200,9 +200,34 @@ def _display_result(repl: NTermREPL, result: Dict) -> None:
         print(f"  Prompt: {data.get('prompt', '')}")
         return
 
+    if cmd_type == "switch":
+        msg = data.get('message', '')
+        if msg:
+            print(f"✓ {msg}")
+        else:
+            print(f"✓ Switched to {data['device']} ({data['hostname']}:{data['port']})")
+            print(f"  Platform: {data.get('platform', 'unknown')}")
+            print(f"  Prompt: {data.get('prompt', '')}")
+        return
+
     if cmd_type == "disconnect":
-        msg = data.get("message", "Disconnected")
-        print(f"✓ {msg}")
+        disconnected = data.get("disconnected")
+        switched_to = data.get("switched_to")
+        msg = data.get("message")
+
+        if msg:
+            print(f"✓ {msg}")
+        elif disconnected:
+            print(f"✓ Disconnected from {disconnected}")
+            if switched_to:
+                print(f"  Switched to: {switched_to}")
+        else:
+            print("✓ Disconnected")
+        return
+
+    if cmd_type == "disconnect_all":
+        count = data.get("count", 0)
+        print(f"✓ Disconnected {count} session(s)")
         return
 
     if cmd_type == "sessions":

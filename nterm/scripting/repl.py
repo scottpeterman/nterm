@@ -102,6 +102,8 @@ class NTermREPL:
       :folders             List folders
       :connect <device>    Connect to device [--cred name] [--debug]
       :disconnect          Disconnect current session
+      :disconnect_all      Disconnect all sessions
+      :switch <device>     Switch to another active session
       :sessions            List all active sessions
       :policy [mode]       Get/set policy (read_only|ops)
       :mode [raw|parsed]   Get/set output mode
@@ -120,7 +122,7 @@ class NTermREPL:
       :neighbors           Fetch CDP/LLDP neighbors (tries both)
       :bgp                 Fetch BGP summary
       :routes              Fetch routing table
-      :intf <name>         Fetch specific interface details
+      :intf <n>         Fetch specific interface details
 
     Raw Commands:
       (anything else)      Runs as CLI on the connected session
@@ -232,9 +234,26 @@ class NTermREPL:
             if not self.state.api.vault_unlocked:
                 return self._err("Vault is locked. Run :unlock first.")
 
-            # Disconnect existing session if any
-            if self.state.session:
-                self._safe_disconnect()
+            # Check if already connected to this device
+            existing_sessions = self.state.api.active_sessions()
+            for sess in existing_sessions:
+                if sess.device_name == device:
+                    # Already connected - just switch to it
+                    self.state.session = sess
+                    self.state.connected_device = sess.device_name
+                    return self._ok({
+                        "type": "switch",
+                        "device": sess.device_name,
+                        "hostname": sess.hostname,
+                        "port": sess.port,
+                        "platform": sess.platform,
+                        "prompt": sess.prompt,
+                        "message": "Already connected - switched to existing session",
+                    })
+
+            # NOTE: We no longer disconnect the existing session!
+            # Old sessions stay active in the background.
+            # User can switch back with :switch or disconnect with :disconnect
 
             try:
                 sess = self.state.api.connect(device, credential=cred, debug=debug)
@@ -255,8 +274,60 @@ class NTermREPL:
         if cmd == ":disconnect":
             if not self.state.session:
                 return self._ok({"type": "disconnect", "message": "No active session"})
+
+            device_name = self.state.connected_device
             self._safe_disconnect()
-            return self._ok({"type": "disconnect"})
+
+            # Try to switch to another active session if available
+            remaining = self.state.api.active_sessions()
+            if remaining:
+                self.state.session = remaining[0]
+                self.state.connected_device = remaining[0].device_name
+                return self._ok({
+                    "type": "disconnect",
+                    "disconnected": device_name,
+                    "switched_to": self.state.connected_device,
+                    "message": f"Disconnected {device_name}, switched to {self.state.connected_device}",
+                })
+
+            return self._ok({"type": "disconnect", "disconnected": device_name})
+
+        if cmd == ":disconnect_all":
+            count = self.state.api.disconnect_all()
+            self.state.session = None
+            self.state.connected_device = None
+            return self._ok({"type": "disconnect_all", "count": count})
+
+        if cmd == ":switch":
+            if len(parts) < 2:
+                # Show available sessions
+                sessions = self.state.api.active_sessions()
+                if not sessions:
+                    return self._err("No active sessions. Use :connect <device> first.")
+
+                session_names = [s.device_name for s in sessions]
+                return self._err(f"Usage: :switch <device>\nActive sessions: {', '.join(session_names)}")
+
+            target_device = parts[1]
+
+            # Find the session
+            sessions = self.state.api.active_sessions()
+            for sess in sessions:
+                if sess.device_name == target_device:
+                    self.state.session = sess
+                    self.state.connected_device = sess.device_name
+                    return self._ok({
+                        "type": "switch",
+                        "device": sess.device_name,
+                        "hostname": sess.hostname,
+                        "port": sess.port,
+                        "platform": sess.platform,
+                        "prompt": sess.prompt,
+                    })
+
+            # Not found
+            session_names = [s.device_name for s in sessions]
+            return self._err(f"Session '{target_device}' not found.\nActive sessions: {', '.join(session_names)}")
 
         if cmd == ":sessions":
             sessions = self.state.api.active_sessions()
@@ -295,7 +366,7 @@ class NTermREPL:
                 })
             mode = parts[1].lower()
             if mode not in ["raw", "parsed"]:
-                return self._err("Mode must be 'raw' or 'parsed'")
+                return self._err("Mode must be raw or parsed")
             self.state.output_mode = mode
             return self._ok({"type": "mode", "mode": mode})
 
@@ -304,113 +375,87 @@ class NTermREPL:
                 return self._ok({"type": "format", "format": self.state.output_format})
             fmt = parts[1].lower()
             if fmt not in ["text", "rich", "json"]:
-                return self._err("Format must be 'text', 'rich', or 'json'")
+                return self._err("Format must be text, rich, or json")
             self.state.output_format = fmt
             return self._ok({"type": "format", "format": fmt})
 
         if cmd == ":set_hint":
             if len(parts) < 2:
                 return self._err("Usage: :set_hint <platform> (e.g., cisco_ios, arista_eos)")
-            platform = parts[1].lower()
-            self.state.platform_hint = platform
-            return self._ok({"type": "set_hint", "platform_hint": platform})
+            self.state.platform_hint = parts[1]
+            return self._ok({"type": "set_hint", "platform_hint": self.state.platform_hint})
 
         if cmd == ":clear_hint":
             self.state.platform_hint = None
             return self._ok({"type": "clear_hint"})
 
         if cmd == ":debug":
-            if len(parts) >= 2:
-                mode = parts[1].lower()
-                if mode in ["on", "true", "1"]:
-                    self.state.debug_mode = True
-                elif mode in ["off", "false", "0"]:
-                    self.state.debug_mode = False
-                else:
-                    return self._err("Debug mode must be on or off")
-            else:
-                self.state.debug_mode = not self.state.debug_mode
+            if len(parts) < 2:
+                return self._ok({"type": "debug", "debug_mode": self.state.debug_mode})
+            val = parts[1].lower()
+            self.state.debug_mode = val in ["on", "true", "1", "yes"]
             return self._ok({"type": "debug", "debug_mode": self.state.debug_mode})
 
         if cmd == ":dbinfo":
-            try:
-                db_info = self.state.api.db_info()
-                return self._ok({"type": "dbinfo", "db_info": db_info})
-            except Exception as e:
-                return self._err(f"Failed to get DB info: {e}")
+            info = self.state.api.db_info()
+            return self._ok({"type": "dbinfo", "db_info": info})
 
-        # ===== Quick Commands (Platform-Aware) =====
+        # ===== Quick Commands =====
         if cmd == ":config":
-            return self._quick_command('config', parse=False, timeout=120)
+            return self._quick_config()
 
         if cmd == ":version":
             return self._quick_version()
 
         if cmd == ":interfaces":
-            return self._quick_command('interfaces_status', parse=True)
+            return self._quick_interfaces()
 
         if cmd == ":neighbors":
             return self._quick_neighbors()
 
         if cmd == ":bgp":
-            return self._quick_command('bgp_summary', parse=True)
+            return self._quick_bgp()
 
         if cmd == ":routes":
-            return self._quick_command('routing_table', parse=True, timeout=60)
+            return self._quick_routes()
 
         if cmd == ":intf":
             if len(parts) < 2:
-                return self._err("Usage: :intf <interface_name> (e.g., :intf Gi0/1)")
-            intf_name = parts[1]
-            return self._quick_command('interface_detail', parse=True, name=intf_name)
+                return self._err("Usage: :intf <interface> (e.g., :intf Gi0/1)")
+            return self._quick_interface_detail(parts[1])
 
         return self._err(f"Unknown REPL command: {cmd}")
 
     # -----------------------
-    # Quick Command Helpers
+    # Quick commands
     # -----------------------
 
-    def _quick_command(
-            self,
-            command_type: str,
-            parse: bool = True,
-            timeout: int = 30,
-            **kwargs
-    ) -> Dict[str, Any]:
-        """Execute a platform-aware command."""
+    def _quick_config(self) -> Dict[str, Any]:
+        """Fetch running configuration."""
         if not self.state.session:
             return self._err("Not connected. Use :connect <device>")
 
-        platform = self.state.platform_hint or self.state.session.platform
-        cmd = get_platform_command(platform, command_type, **kwargs)
-
-        if not cmd:
-            return self._err(f"Command '{command_type}' not available for platform '{platform}'")
-
         try:
             started = time.time()
-            result = self.state.api.send(
+            result = self.state.api.send_platform_command(
                 self.state.session,
-                cmd,
-                timeout=timeout,
-                parse=parse,
-                normalize=True,
+                'config',
+                parse=False,  # Config is typically not parsed
+                timeout=60,
             )
             elapsed = time.time() - started
 
+            if not result:
+                return self._err("Config command not available for this platform")
+
             payload = result.to_dict()
             payload["elapsed_seconds"] = round(elapsed, 3)
-            payload["command_type"] = command_type
+            payload["command_type"] = "config"
 
-            # Truncate if needed
-            raw = payload.get("raw_output", "")
-            if len(raw) > self.state.policy.max_output_chars:
-                payload["raw_output"] = raw[:self.state.policy.max_output_chars] + "\n...<truncated>..."
-
-            return self._ok({"type": "result", "result": payload})
+            return self._ok({"type": "config", "result": payload})
 
         except Exception as e:
-            return self._err(f"Command failed: {e}")
+            return self._err(f"Config fetch failed: {e}")
 
     def _quick_version(self) -> Dict[str, Any]:
         """Fetch and extract version info."""
@@ -445,6 +490,33 @@ class NTermREPL:
 
         except Exception as e:
             return self._err(f"Version command failed: {e}")
+
+    def _quick_interfaces(self) -> Dict[str, Any]:
+        """Fetch interface status."""
+        if not self.state.session:
+            return self._err("Not connected. Use :connect <device>")
+
+        try:
+            started = time.time()
+            result = self.state.api.send_platform_command(
+                self.state.session,
+                'interfaces_status',
+                parse=True,
+                timeout=30,
+            )
+            elapsed = time.time() - started
+
+            if not result:
+                return self._err("Interfaces command not available for this platform")
+
+            payload = result.to_dict()
+            payload["elapsed_seconds"] = round(elapsed, 3)
+            payload["command_type"] = "interfaces"
+
+            return self._ok({"type": "interfaces", "result": payload})
+
+        except Exception as e:
+            return self._err(f"Interfaces command failed: {e}")
 
     def _quick_neighbors(self) -> Dict[str, Any]:
         """Fetch CDP/LLDP neighbors with fallback."""
@@ -513,6 +585,89 @@ class NTermREPL:
         except Exception as e:
             return self._err(f"Neighbor discovery failed: {e}")
 
+    def _quick_bgp(self) -> Dict[str, Any]:
+        """Fetch BGP summary."""
+        if not self.state.session:
+            return self._err("Not connected. Use :connect <device>")
+
+        try:
+            started = time.time()
+            result = self.state.api.send_platform_command(
+                self.state.session,
+                'bgp_summary',
+                parse=True,
+                timeout=30,
+            )
+            elapsed = time.time() - started
+
+            if not result:
+                return self._err("BGP command not available for this platform")
+
+            payload = result.to_dict()
+            payload["elapsed_seconds"] = round(elapsed, 3)
+            payload["command_type"] = "bgp"
+
+            return self._ok({"type": "bgp", "result": payload})
+
+        except Exception as e:
+            return self._err(f"BGP command failed: {e}")
+
+    def _quick_routes(self) -> Dict[str, Any]:
+        """Fetch routing table."""
+        if not self.state.session:
+            return self._err("Not connected. Use :connect <device>")
+
+        try:
+            started = time.time()
+            result = self.state.api.send_platform_command(
+                self.state.session,
+                'routing_table',
+                parse=True,
+                timeout=30,
+            )
+            elapsed = time.time() - started
+
+            if not result:
+                return self._err("Routing command not available for this platform")
+
+            payload = result.to_dict()
+            payload["elapsed_seconds"] = round(elapsed, 3)
+            payload["command_type"] = "routes"
+
+            return self._ok({"type": "routes", "result": payload})
+
+        except Exception as e:
+            return self._err(f"Routing command failed: {e}")
+
+    def _quick_interface_detail(self, interface: str) -> Dict[str, Any]:
+        """Fetch specific interface details."""
+        if not self.state.session:
+            return self._err("Not connected. Use :connect <device>")
+
+        try:
+            started = time.time()
+            result = self.state.api.send_platform_command(
+                self.state.session,
+                'interface_detail',
+                name=interface,
+                parse=True,
+                timeout=30,
+            )
+            elapsed = time.time() - started
+
+            if not result:
+                return self._err(f"Interface detail command not available for this platform")
+
+            payload = result.to_dict()
+            payload["elapsed_seconds"] = round(elapsed, 3)
+            payload["command_type"] = "interface_detail"
+            payload["interface"] = interface
+
+            return self._ok({"type": "interface_detail", "result": payload})
+
+        except Exception as e:
+            return self._err(f"Interface detail command failed: {e}")
+
     # -----------------------
     # CLI send path
     # -----------------------
@@ -568,6 +723,7 @@ class NTermREPL:
     # -----------------------
 
     def _safe_disconnect(self) -> None:
+        """Disconnect current session only (not all sessions)."""
         if self.state.session:
             try:
                 self.state.api.disconnect(self.state.session)
@@ -601,6 +757,8 @@ Inventory:
 Sessions:
   :connect <device>    Connect to device [--cred name] [--debug]
   :disconnect          Disconnect current session
+  :disconnect_all      Disconnect all sessions
+  :switch <device>     Switch to another active session
   :sessions            List all active sessions
 
 Quick Commands (platform-aware, auto-selects correct syntax):
@@ -610,7 +768,7 @@ Quick Commands (platform-aware, auto-selects correct syntax):
   :neighbors           Fetch CDP/LLDP neighbors (tries both)
   :bgp                 Fetch BGP summary
   :routes              Fetch routing table
-  :intf <name>         Fetch specific interface details
+  :intf <n>            Fetch specific interface details
 
 Settings:
   :policy [mode]       Get/set policy mode (read_only|ops)
@@ -628,15 +786,16 @@ Info:
 Raw Commands:
   (anything else)      Sends as CLI command to connected device
 
-Examples:
-  :unlock
-  :devices *leaf*
-  :connect usa-leaf-1
-  :version
-  :interfaces
-  :neighbors
-  show ip route
-  :disconnect
+Multi-Session Example:
+  :connect spine-1     # Connect to first device
+  show version         # Run command on spine-1
+  :connect spine-2     # Connect to second (spine-1 stays active!)
+  show version         # Run command on spine-2
+  :sessions            # See both sessions
+  :switch spine-1      # Switch back to spine-1
+  show ip route        # Run command on spine-1
+  :disconnect          # Disconnect spine-1, auto-switch to spine-2
+  :disconnect_all      # Disconnect all remaining sessions
   :exit
 """
 

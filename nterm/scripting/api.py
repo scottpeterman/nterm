@@ -19,13 +19,16 @@ from .models import ActiveSession, CommandResult, DeviceInfo, CredentialInfo
 from .platform_data import INTERFACE_DETAIL_FIELD_MAP
 from .platform_utils import (
     detect_platform,
+    detect_platform_from_template,
+    extract_platform_from_template_name,
     normalize_fields,
     get_paging_disable_command,
     get_platform_command,
     extract_version_info,
     extract_neighbor_info,
+    try_disable_paging,
 )
-from .ssh_connection import connect_ssh, send_command
+from .ssh_connection import connect_ssh, send_command, PagingNotDisabledError
 
 # TextFSM parsing - REQUIRED
 try:
@@ -397,10 +400,21 @@ class NTermAPI:
             prompt=prompt,
         )
 
-        # Detect platform
+        # Pre-emptively try to disable paging BEFORE platform detection
+        # This prevents 'show version' from being truncated by --More--
+        # Use the most common command - harmless if it fails on non-Cisco platforms
+        try:
+            send_command(shell, "terminal length 0", prompt, timeout=5)
+            if debug:
+                print(f"[DEBUG] Pre-emptive paging disable: terminal length 0")
+        except Exception as e:
+            if debug:
+                print(f"[DEBUG] Pre-emptive paging disable failed (normal on some platforms): {e}")
+
+        # Detect platform using TextFSM template matching (primary) or regex (fallback)
         try:
             version_output = send_command(shell, "show version", prompt)
-            platform = detect_platform(version_output)
+            platform = detect_platform(version_output, tfsm_engine=self._tfsm_engine)
             session.platform = platform
             if debug:
                 print(f"[DEBUG] Platform detected: {platform}")
@@ -413,9 +427,13 @@ class NTermAPI:
         if paging_cmd:
             try:
                 send_command(shell, paging_cmd, prompt, timeout=5)
+                session._paging_disabled = True
             except Exception as e:
                 if debug:
                     print(f"[DEBUG] Failed to disable paging: {e}")
+        else:
+            # Platform unknown - will try to auto-fix if paging error occurs
+            session._paging_disabled = False
 
         self._active_sessions[device_name] = session
         return session
@@ -472,6 +490,7 @@ class NTermAPI:
         timeout: int = 60,
         parse: bool = True,
         normalize: bool = True,
+        _retry_after_paging_fix: bool = False,
     ) -> CommandResult:
         """
         Send command to a connected session.
@@ -482,6 +501,7 @@ class NTermAPI:
             timeout: Command timeout in seconds
             parse: Whether to attempt TextFSM parsing
             normalize: Whether to normalize field names (requires parse=True)
+            _retry_after_paging_fix: Internal flag to prevent infinite retry loops
 
         Returns:
             CommandResult with raw and parsed output
@@ -495,12 +515,62 @@ class NTermAPI:
             if result.parsed_data:
                 for row in result.parsed_data:
                     print(row)
+
+        Note:
+            If paging is detected (--More-- prompt), the API will automatically
+            try to disable paging and retry the command once.
         """
         if not session.is_connected():
             raise RuntimeError(f"Session {session.device_name} is not connected")
 
         # Execute command using our refactored module
-        raw_output = send_command(session.shell, command, session.prompt, timeout)
+        try:
+            raw_output = send_command(session.shell, command, session.prompt, timeout)
+        except PagingNotDisabledError as e:
+            # Auto-recovery: try to disable paging and retry
+            if _retry_after_paging_fix:
+                # Already tried once, don't loop forever
+                raise RuntimeError(
+                    f"Paging still not disabled after auto-fix attempt. "
+                    f"Original error: {e}"
+                )
+
+            # Try to disable paging with multiple commands
+            print(f"[AUTO-FIX] Paging detected, attempting to disable...")
+
+            # Send Ctrl+C to break out of --More-- prompt
+            try:
+                session.shell.send('\x03')  # Ctrl+C
+                import time
+                time.sleep(0.5)
+                # Clear any pending output
+                while session.shell.recv_ready():
+                    session.shell.recv(65536)
+            except Exception:
+                pass
+
+            # Try multiple paging disable commands
+            success = try_disable_paging(
+                session.shell,
+                session.prompt,
+                send_command,
+                debug=True,
+            )
+
+            if success:
+                session._paging_disabled = True
+                print(f"[AUTO-FIX] Paging disabled, retrying command...")
+                # Retry the original command
+                return self.send(
+                    session, command, timeout, parse, normalize,
+                    _retry_after_paging_fix=True
+                )
+            else:
+                raise RuntimeError(
+                    f"Failed to auto-disable paging. "
+                    f"Tried multiple commands but none succeeded. "
+                    f"Original error: {e}"
+                )
 
         # Create result object
         result = CommandResult(
@@ -655,16 +725,22 @@ class NTermAPI:
         Disconnect a session.
 
         Args:
-            session: ActiveSession to close
+            session: ActiveSession to disconnect
         """
         if session.device_name in self._active_sessions:
             del self._active_sessions[session.device_name]
 
-        if session.shell:
-            session.shell.close()
+        try:
+            if session.shell:
+                session.shell.close()
+        except Exception:
+            pass
 
-        if session.client:
-            session.client.close()
+        try:
+            if session.client:
+                session.client.close()
+        except Exception:
+            pass
 
     def disconnect_all(self) -> int:
         """
@@ -674,60 +750,48 @@ class NTermAPI:
             Number of sessions disconnected
 
         Example:
-            # Cleanup at end of script
+            # At end of script or in finally block
             count = api.disconnect_all()
             print(f"Disconnected {count} session(s)")
         """
-        count = 0
-        for session_id in list(self._active_sessions.keys()):
+        count = len(self._active_sessions)
+
+        for session in list(self._active_sessions.values()):
             try:
-                session = self._active_sessions[session_id]
                 self.disconnect(session)
-                count += 1
             except Exception:
                 pass
+
+        self._active_sessions.clear()
         return count
 
     def active_sessions(self) -> List[ActiveSession]:
         """
-        Get list of currently active sessions.
+        List all active sessions.
 
         Returns:
             List of ActiveSession objects
         """
-        # Clean up stale sessions
-        active = []
-        stale = []
-
-        for session_id, session in self._active_sessions.items():
-            if session.is_connected():
-                active.append(session)
-            else:
-                stale.append(session_id)
-
-        # Remove stale entries
-        for session_id in stale:
-            del self._active_sessions[session_id]
-
-        return active
+        return list(self._active_sessions.values())
 
     # -------------------------------------------------------------------------
-    # Debug / diagnostic methods
+    # Diagnostics
     # -------------------------------------------------------------------------
 
     def db_info(self) -> Dict[str, Any]:
         """
-        Get detailed information about TextFSM database.
+        Get information about the TextFSM database.
 
         Returns:
-            Dict with database path, existence, and diagnostic info
+            Dict with db_path, db_exists, db_size, db_size_mb, etc.
         """
         info = {
-            "engine_available": self._tfsm_engine is not None,
+            "engine_initialized": self._tfsm_engine is not None,
             "db_path": None,
             "db_exists": False,
+            "db_size": None,
+            "db_size_mb": None,
             "db_absolute_path": None,
-            "current_working_directory": os.getcwd(),
         }
 
         if self._tfsm_engine and hasattr(self._tfsm_engine, 'db_path'):
@@ -815,6 +879,90 @@ class NTermAPI:
             debug_info["parse_success"] = False
 
         return debug_info
+
+    def detect_platform_from_output(
+        self,
+        output: str,
+        min_score: float = 50.0,
+    ) -> Dict[str, Any]:
+        """
+        Detect platform from command output using TextFSM template matching.
+
+        This is the same method used internally during connect() for platform
+        detection. Useful for testing and debugging.
+
+        Args:
+            output: Raw command output (typically from 'show version')
+            min_score: Minimum match score to accept (default 50.0)
+
+        Returns:
+            Dict with:
+            - platform: Detected platform string or None
+            - template: Best matching template name
+            - score: Match confidence score
+            - method: 'textfsm' or 'regex' or 'none'
+            - parsed_data: Parsed data from template if available
+
+        Example:
+            >>> result = api.send(session, "show version", parse=False)
+            >>> api.detect_platform_from_output(result.raw_output)
+            {
+                'platform': 'cisco_ios',
+                'template': 'cisco_ios_show_version',
+                'score': 95.83,
+                'method': 'textfsm',
+                'parsed_data': [{'VERSION': '15.2(4)M11', ...}]
+            }
+        """
+        result = {
+            "platform": None,
+            "template": None,
+            "score": 0.0,
+            "method": "none",
+            "parsed_data": None,
+            "all_scores": None,
+        }
+
+        if not output:
+            result["error"] = "No output provided"
+            return result
+
+        # Try TextFSM template matching first
+        if self._tfsm_engine:
+            try:
+                best_template, parsed_data, best_score, all_scores = self._tfsm_engine.find_best_template(
+                    device_output=output,
+                    filter_string="show_version",
+                )
+
+                result["template"] = best_template
+                result["score"] = best_score
+                result["all_scores"] = all_scores
+                result["parsed_data"] = parsed_data
+
+                if best_template and best_score >= min_score:
+                    platform = extract_platform_from_template_name(best_template)
+                    if platform:
+                        result["platform"] = platform
+                        result["method"] = "textfsm"
+                        return result
+
+            except Exception as e:
+                result["textfsm_error"] = str(e)
+
+        # Fallback to regex
+        from .platform_data import PLATFORM_PATTERNS
+        import re
+
+        for platform, patterns in PLATFORM_PATTERNS.items():
+            for pattern in patterns:
+                if re.search(pattern, output, re.IGNORECASE):
+                    result["platform"] = platform
+                    result["method"] = "regex"
+                    result["regex_pattern"] = pattern
+                    return result
+
+        return result
 
     # -------------------------------------------------------------------------
     # Convenience / REPL helpers
@@ -912,12 +1060,28 @@ Command Results:
 
 Debugging:
   api.debug_parse(cmd, output, platform)  Debug why parsing failed
+  api.detect_platform_from_output(output) Detect platform from command output
   api.db_info()                    Show TextFSM database path and status
   
 Status:
   api.status()                     Get summary
   api.vault_unlocked               Check vault status
   api._tfsm_engine                 TextFSM parser (required)
+
+Platform Detection:
+  Platform is detected automatically during connect() using:
+  1. TextFSM template matching (primary - more accurate)
+  2. Regex patterns (fallback)
+  
+  The API sends 'terminal length 0' before detection to prevent
+  paging issues. Template names like 'cisco_ios_show_version' 
+  tell us the platform directly.
+
+Auto-Recovery:
+  If paging (--More--) is detected, the API will automatically:
+  1. Send Ctrl+C to break out of the pager
+  2. Try multiple paging disable commands
+  3. Retry the original command
 
 Examples:
   # Connect and execute (manual)
