@@ -40,10 +40,11 @@ Built for managing hundreds of devices through bastion hosts with hardware secur
 - Cross-platform keychain: macOS Keychain, Windows Credential Locker, Linux Secret Service
 - Full PyQt6 management UI
 
-**Scripting API** *(Experimental)*
+**Scripting API**
 - Query device inventory and credentials programmatically
 - Built-in IPython console with API pre-loaded
-- CLI for shell scripts and automation
+- **Platform-aware commands** - one API, correct syntax everywhere
+- **Interactive REPL** with quick commands and structured output
 - Foundation for MCP tools and agentic workflows
 
 ---
@@ -147,9 +148,9 @@ python -m nterm
 
 ---
 
-## Scripting API *(Experimental)*
+## Scripting API
 
-nterm includes a scripting API for programmatic access to your device inventory and credential vault. Use it from IPython, CLI, or Python scripts.
+nterm includes a full scripting API for programmatic access to your device inventory, credential vault, and network devices. Use it from IPython, CLI, or Python scripts.
 
 ### IPython Console
 
@@ -159,11 +160,78 @@ Open **Dev → IPython → Open in Tab** to get an interactive console with the 
 api.devices()                    # List all saved devices
 api.search("leaf")               # Search by name/hostname
 api.devices("eng-*")             # Glob pattern filter
+api.folders()                    # List all folders
 
 api.unlock("vault-password")     # Unlock credential vault
 api.credentials()                # List credentials (metadata only)
 
+# Connect and execute commands
+with api.session("usa-leaf-1") as s:
+    result = api.send(s, "show version")
+    print(result.parsed_data)
+
 api.help()                       # Show all commands
+```
+
+### Interactive REPL
+
+Start the REPL for interactive device exploration with platform-aware quick commands:
+
+```python
+api.repl()
+```
+
+```
+nterm> :unlock
+nterm> :connect usa-leaf-1
+
+📊 usa-leaf-1> :version
+──────────────────────────────────────────────────
+  Version:  15.2(4.0.55)E
+  Hardware: IOSv
+  Serial:   9J0PD0QB9W1
+  Uptime:   1 week, 4 days, 7 minutes
+──────────────────────────────────────────────────
+
+📊 usa-leaf-1> :neighbors
+Local Interface      Neighbor                       Remote Port
+----------------------------------------------------------------
+Gi0/0                usa-spine-2.lab.local          Ethernet1
+Gi0/1                usa-spine-1.lab.local          Ethernet1
+
+📊 usa-leaf-1> :interfaces
+[Rich formatted interface table]
+```
+
+**Quick Commands:**
+- `:version` - Structured version info
+- `:config` - Running configuration
+- `:interfaces` - Interface status
+- `:neighbors` - CDP/LLDP neighbors (auto-detects)
+- `:bgp` - BGP summary
+- `:routes` - Routing table
+
+### Python Scripts
+
+```python
+from nterm.scripting import NTermAPI
+
+api = NTermAPI()
+api.unlock("vault-password")
+
+# Context manager for automatic cleanup
+for device in api.devices("*spine*"):
+    with api.session(device.name) as s:
+        # Platform-aware commands - works on Cisco, Arista, Juniper
+        result = api.send_platform_command(s, 'version')
+        print(f"{device.name}: {result.parsed_data[0].get('VERSION')}")
+
+# Try multiple commands until one works
+with api.session("router1") as s:
+    result = api.send_first(s, [
+        "show cdp neighbors detail",
+        "show lldp neighbors detail",
+    ])
 ```
 
 ### CLI
@@ -176,32 +244,19 @@ nterm-cli credentials --unlock        # List credentials
 nterm-cli --json devices              # JSON output for scripting
 ```
 
-### Python Scripts
+### Key Features
 
-```python
-from nterm.scripting import NTermAPI
+| Feature | Description |
+|---------|-------------|
+| **Context Manager** | `with api.session()` auto-disconnects |
+| **Platform-Aware** | `send_platform_command()` picks correct syntax |
+| **Fallback Commands** | `send_first()` tries alternatives |
+| **Structured Output** | TextFSM parsing to List[Dict] |
+| **ANSI Filtering** | Clean output, no escape sequences |
+| **Paging Detection** | Raises error if paging not disabled |
 
-api = NTermAPI()
-
-# Query devices
-for device in api.devices("*spine*"):
-    print(f"{device.name}: {device.hostname}")
-
-# Work with credentials
-api.unlock("vault-password")
-cred = api.credential("lab-admin")
-print(f"Username: {cred.username}")
-```
-
-### Roadmap
-
-The scripting API is the foundation for:
-
-- **Command execution** — `api.connect()` and `api.send()` for programmatic device interaction
-- **Batch operations** — Fan out commands across device groups
-- **MCP tool integration** — Expose nterm capabilities to AI agents
-
-See [scripting/README.md](nterm/scripting/README.md) for full API documentation.
+See [scripting/README_API_IPython.md](nterm/scripting/README_API_IPython.md) for full API documentation.
+See [scripting/README_REPL.md](nterm/scripting/README_REPL.md) for REPL documentation.
 
 ---
 
@@ -391,9 +446,14 @@ nterm/
 │   ├── resolver.py    # Pattern-based resolution
 │   └── manager_ui.py  # PyQt6 credential manager
 ├── manager/           # Session tree, connection dialogs
-└── scripting/         # API, CLI, automation support
-    ├── api.py         # NTermAPI class
-    └── cli.py         # nterm-cli entry point
+└── scripting/         # API, REPL, automation support
+    ├── api.py             # NTermAPI class
+    ├── models.py          # ActiveSession, CommandResult, DeviceInfo
+    ├── platform_data.py   # Platform commands and patterns
+    ├── platform_utils.py  # Platform detection, extraction helpers
+    ├── ssh_connection.py  # Low-level SSH with ANSI filtering
+    ├── repl.py            # NTermREPL command router
+    └── repl_interactive.py # Interactive REPL display
 ```
 
 ---

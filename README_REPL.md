@@ -16,12 +16,14 @@ Traditional network automation forces you to choose between:
 - 🎯 **Interactive** - Natural command execution with visual feedback
 - 🤖 **Programmatic** - JSON output for MCP agents and automation
 - 🛡️ **Safe** - Read-only mode, command deny-lists, session isolation
+- ⚡ **Quick Commands** - Platform-aware shortcuts for common tasks
 
 ## Table of Contents
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Commands Reference](#commands-reference)
+- [Quick Commands](#quick-commands-new)
 - [Output Modes & Formats](#output-modes--formats)
 - [Security & Policies](#security--policies)
 - [Use Cases](#use-cases)
@@ -35,7 +37,7 @@ Traditional network automation forces you to choose between:
 ### Requirements
 ```bash
 # Core requirements
-Python 3.8+
+Python 3.10+
 nterm library
 
 # Optional for enhanced display
@@ -45,9 +47,6 @@ pip install rich
 ### Setup
 ```python
 from nterm.scripting import api
-
-# Download TextFSM templates (first time only)
-api.download_templates()
 
 # Verify installation
 api.db_info()
@@ -77,44 +76,84 @@ Type :help for commands, :exit to quit
 
 nterm> :unlock
 Enter vault password: ********
-Vault unlocked
+✓ Vault unlocked
 
 nterm> :devices
-Name                 Hostname             Folder         
--------------------------------------------------------
-wan-core-1           172.16.128.1         Lab-WAN
-eng-spine-1          172.16.2.2           Lab-ENG
+Name                      Hostname             Port   Folder         
+------------------------------------------------------------------
+usa-leaf-1                172.16.10.21         22     Lab-USA
+usa-spine-1               172.16.10.2          22     Lab-USA
+eng-leaf-1                172.16.2.21          22     Lab-ENG
 
-nterm> :connect wan-core-1
-Connected to wan-core-1 (172.16.128.1:22)
-Platform: cisco_ios
-Prompt: wan-core-1#
+3 device(s)
 
-📊 wan-core-1> show ip interface brief
-[Parsed with cisco_ios - format: text]
+nterm> :connect usa-leaf-1
+✓ Connected to usa-leaf-1 (172.16.10.21:22)
+  Platform: cisco_ios
+  Prompt: usa-leaf-1#
+
+📊 usa-leaf-1> :version
+──────────────────────────────────────────────────
+  Version:  15.2(4.0.55)E
+  Hardware: IOSv
+  Serial:   9J0PD0QB9W1
+  Uptime:   1 week, 4 days, 7 minutes
+──────────────────────────────────────────────────
+[0.502s]
+
+📊 usa-leaf-1> :interfaces
+[Parsed: cisco_ios | interfaces_status | format: rich]
 ------------------------------------------------------------
-interface         | IP_ADDRESS   | STATUS    | PROTO
-FastEthernet0/0   | unassigned   | admin dn  | down
-Ethernet1/0       | 172.16.1.2   | up        | up
-Ethernet1/1       | 172.16.100.1 | up        | up
+┌─────────┬──────────────────┬────────┬───────────┬─────────┐
+│ FC_MODE │ NAME             │ PORT   │ STATUS    │ VLAN_ID │
+├─────────┼──────────────────┼────────┼───────────┼─────────┤
+│         │ To usa-spine-2   │ Gi0/0  │ connected │ trunk   │
+│         │ To usa-spine-1   │ Gi0/1  │ connected │ trunk   │
+│         │ Server Port 1    │ Gi0/2  │ notconnect│ 110     │
+└─────────┴──────────────────┴────────┴───────────┴─────────┘
+[0.505s]
 
-[0.234s]
+📊 usa-leaf-1> :neighbors
+Local Interface      Neighbor                       Remote Port          Platform
+------------------------------------------------------------------------------------------
+Gi0/0                usa-spine-2.lab.local          Ethernet1            Arista vEOS
+Gi0/1                usa-spine-1.lab.local          Ethernet1            Arista vEOS
+
+2 neighbor(s)
+[0.456s]
 ```
 
 ## Commands Reference
 
-### Authentication & Security
+### Vault Commands
 ```
 :unlock              Unlock credential vault (secure password prompt)
 :lock                Lock credential vault
-:creds [pattern]     List available credentials
 ```
 
-### Device Management
+### Inventory Commands
 ```
-:devices [pattern]   List available devices (supports glob patterns)
-:connect <device> [--cred name]   Connect to device
+:creds [pattern]     List available credentials (supports glob patterns)
+:devices [pattern]   List available devices [--folder name]
+:folders             List all folders
+```
+
+### Session Commands
+```
+:connect <device>    Connect to device [--cred name] [--debug]
 :disconnect          Close current connection
+:sessions            List all active sessions (shows current with →)
+```
+
+### Quick Commands (NEW - Platform-Aware)
+```
+:config              Fetch running configuration
+:version             Fetch and display version info (structured)
+:interfaces          Fetch interface status
+:neighbors           Fetch CDP/LLDP neighbors (tries both automatically)
+:bgp                 Fetch BGP summary
+:routes              Fetch routing table
+:intf <name>         Fetch specific interface details
 ```
 
 ### Output Control
@@ -131,11 +170,98 @@ Ethernet1/1       | 172.16.100.1 | up        | up
 :dbinfo              Check TextFSM database health
 :policy [read_only|ops]   Set command filtering policy
 :help                Show all commands
-:exit                Exit REPL
+:exit                Disconnect all and exit
 ```
 
-### Command Execution
+### Raw Command Execution
 Any input that doesn't start with `:` is sent to the connected device as a CLI command.
+
+## Quick Commands (NEW)
+
+Quick commands are **platform-aware shortcuts** that automatically use the correct syntax for the detected platform. No more remembering `show run` vs `show configuration`.
+
+### :version
+Fetches and displays structured version information:
+
+```
+📊 usa-leaf-1> :version
+──────────────────────────────────────────────────
+  Version:  15.2(4.0.55)E
+  Hardware: IOSv
+  Serial:   9J0PD0QB9W1
+  Uptime:   1 week, 4 days, 7 minutes
+──────────────────────────────────────────────────
+[0.502s]
+```
+
+### :config
+Fetches running configuration (uses correct command per platform):
+
+| Platform | Command Used |
+|----------|--------------|
+| cisco_ios | `show running-config` |
+| arista_eos | `show running-config` |
+| juniper_junos | `show configuration` |
+
+### :interfaces
+Fetches interface status table:
+
+```
+📊 device> :interfaces
+[Parsed: cisco_ios | interfaces_status | format: rich]
+┌──────────────┬────────┬───────────┬─────────┐
+│ NAME         │ PORT   │ STATUS    │ VLAN_ID │
+├──────────────┼────────┼───────────┼─────────┤
+│ Uplink       │ Gi0/0  │ connected │ trunk   │
+│ Server Port  │ Gi0/1  │ notconnect│ 100     │
+└──────────────┴────────┴───────────┴─────────┘
+```
+
+### :neighbors
+Automatically tries CDP then LLDP (or LLDP first for non-Cisco):
+
+```
+📊 usa-leaf-1> :neighbors
+Local Interface      Neighbor                       Remote Port          Platform
+------------------------------------------------------------------------------------------
+Gi0/0                usa-spine-2.lab.local          Ethernet1            Arista vEOS
+Gi0/1                usa-spine-1.lab.local          Ethernet1            Arista vEOS
+
+2 neighbor(s)
+[0.456s]
+```
+
+### :bgp
+Fetches BGP summary:
+
+```
+📊 spine-1> :bgp
+[Parsed: arista_eos | bgp_summary | format: text]
+NEIGHBOR       | AS     | STATE_PFXRCD
+10.0.0.1       | 65001  | 12
+10.0.0.2       | 65002  | 8
+```
+
+### :routes
+Fetches routing table:
+
+```
+📊 device> :routes
+[Parsed: cisco_ios | routing_table | format: text]
+PROTOCOL | NETWORK        | NEXT_HOP     | INTERFACE
+C        | 10.0.0.0/24    | directly     | Gi0/0
+O        | 192.168.1.0/24 | 10.0.0.1     | Gi0/1
+```
+
+### :intf <name>
+Fetches specific interface details:
+
+```
+📊 device> :intf Gi0/1
+[Parsed: cisco_ios | interface_detail | format: text]
+INTERFACE     | IP_ADDRESS   | STATUS | MTU  | BANDWIDTH
+Gi0/1         | 10.0.0.1     | up     | 1500 | 1000000
+```
 
 ## Output Modes & Formats
 
@@ -252,7 +378,7 @@ Allows configuration changes (use with caution).
 
 ```
 nterm> :policy ops
-Policy mode: ops
+Policy mode: ⚡ ops
 
 # Now configuration commands are allowed
 ```
@@ -272,6 +398,16 @@ policy = REPLPolicy(
 api.repl(policy=policy)
 ```
 
+### Allow-List Mode
+Restrict to specific command prefixes only:
+
+```python
+policy = REPLPolicy(
+    mode="read_only",
+    allow_prefixes=["show", "display", "get"],  # Only these allowed
+)
+```
+
 ### Credential Security
 - Passwords never displayed in terminal
 - Secure `getpass` prompt for vault unlock
@@ -282,29 +418,31 @@ api.repl(policy=policy)
 
 ### 1. Interactive Network Exploration (Humans)
 
-**Visual device discovery:**
+**Quick device checks with structured output:**
 ```
-nterm> :devices Lab-*
-Name                 Hostname             Folder         
--------------------------------------------------------
-Lab-ENG-spine-1      172.16.2.2           Lab-ENG
-Lab-USA-spine-1      172.16.10.2          Lab-USA
+nterm> :unlock
+nterm> :connect usa-spine-1
+
+📊 usa-spine-1> :version
+──────────────────────────────────────────────────
+  Version:  4.28.1F
+  Hardware: DCS-7050SX3-48YC8
+  Serial:   SSJ12345678
+  Uptime:   45 days, 12:34:56
+──────────────────────────────────────────────────
+
+📊 usa-spine-1> :neighbors
+[Quick topology view]
+
+📊 usa-spine-1> :bgp
+[BGP health at a glance]
 ```
 
 **Rich format for pattern recognition:**
 ```
 📊 device> :format rich
-📊 device> show interfaces status
+📊 device> :interfaces
 [Beautiful colored table helps spot patterns quickly]
-```
-
-**Quick multi-device checks:**
-```
-📊 usa-spine-1> show version | include uptime
-📊 usa-spine-1> :disconnect
-
-nterm> :connect eng-spine-1
-📊 eng-spine-1> show version | include uptime
 ```
 
 ### 2. Data Export and Analysis
@@ -314,127 +452,64 @@ nterm> :connect eng-spine-1
 📊 device> :format json
 📊 device> show ip route
 [Copy JSON output]
-📊 device> show interfaces
-[Copy JSON output]
-
-# Process in jq, Python, or save to file
 ```
 
-**Parse once, use everywhere:**
+**Process with external tools:**
 ```bash
-# Export from REPL
-$ nterm-export > interfaces.json
-
 # Process with jq
-$ cat interfaces.json | jq '.[] | select(.STATUS=="up")'
-
-# Load in Python
-import json
-interfaces = json.load(open("interfaces.json"))
+cat routes.json | jq '.[] | select(.PROTOCOL=="O")'
 ```
 
 ### 3. MCP Agent Integration
 
-**Agent workflow:**
+**Agent can use same commands:**
 ```python
-from nterm.scripting.repl import NTermREPL
-from nterm.scripting import api
+result = repl.handle_line(":connect wan-core-1")
+result = repl.handle_line(":version")  # Structured version info
+result = repl.handle_line(":neighbors")  # CDP/LLDP auto-detection
 
-# Initialize REPL for agent
-repl = NTermREPL(api=api)
-
-# Agent unlocks vault (password from secure store)
-repl.handle_line(":unlock")  # Password via secure method
-
-# Agent configures output
-repl.handle_line(":format json")
-repl.handle_line(":connect wan-core-1")
-
-# Agent gathers data
-version_result = repl.handle_line("show version")
-if version_result["ok"]:
-    version = version_result["data"]["result"]["parsed_data"]
-    
-# Agent analyzes
-interface_result = repl.handle_line("show ip interface brief")
-interfaces = interface_result["data"]["result"]["parsed_data"]
-
-up_count = len([i for i in interfaces if i["STATUS"] == "up"])
-
-# Agent takes action based on findings
-if up_count < threshold:
-    # Alert or remediate
-    pass
-
-# Cleanup
-repl.handle_line(":disconnect")
+# Access structured data
+version_info = result["data"]["result"]["version_info"]
 ```
 
-**Benefits for agents:**
-- Structured data (no text parsing)
-- Same safety as humans
-- Observable actions
-- Consistent interface
+### 4. Multi-Device Quick Checks
 
-### 4. Troubleshooting and Debugging
-
-**Database health check:**
 ```
-nterm> :dbinfo
+nterm> :connect usa-leaf-1
+📊 usa-leaf-1> :version
+[Quick check]
+📊 usa-leaf-1> :disconnect
 
-TextFSM Database Info:
-============================================================
-Engine Available:  True
-Database Size:     319,488 bytes (0.3 MB)
-
-✓ Database appears healthy
-```
-
-**Debug mode for parsing issues:**
-```
-📊 device> :debug on
-📊 device> show version
-
-[DEBUG - Full Result Dict]
-------------------------------------------------------------
-{
-  "parsed_data": [...],
-  "parse_success": true,
-  "platform": "cisco_ios"
-}
-------------------------------------------------------------
-```
-
-**Platform override for misbehaving devices:**
-```
-📊 device> :set_hint arista_eos
-📊 device[arista_eos]> show version
-[Uses Arista parser instead of auto-detected]
+nterm> :connect usa-leaf-2
+📊 usa-leaf-2> :version
+[Quick check]
 ```
 
 ## Programmatic Usage
 
-### Basic API Usage
+### Basic Pattern
 
 ```python
-from nterm.scripting.repl import NTermREPL, REPLPolicy
+from nterm.scripting.repl import NTermREPL
 from nterm.scripting import api
 
-# Create REPL instance
 repl = NTermREPL(api=api)
 
-# Execute commands programmatically
-result = repl.handle_line(":unlock")
+# Unlock and connect
+repl.do_unlock("vault-password")  # Direct unlock
 result = repl.handle_line(":connect wan-core-1")
-result = repl.handle_line(":format json")
-result = repl.handle_line("show ip interface brief")
 
-# Access structured result
-if result["ok"]:
-    data = result["data"]
-    if data["type"] == "result":
-        parsed_data = data["result"]["parsed_data"]
-        # parsed_data is list[dict]
+# Use quick commands
+result = repl.handle_line(":version")
+version_info = result["data"]["result"]["version_info"]
+print(f"Version: {version_info['version']}")
+
+# Use raw commands
+result = repl.handle_line("show ip interface brief")
+interfaces = result["data"]["result"]["parsed_data"]
+
+# Cleanup
+repl.handle_line(":disconnect")
 ```
 
 ### Result Structure
@@ -453,21 +528,51 @@ All commands return a dictionary with this structure:
 }
 ```
 
-**Command result example:**
+**Quick command result example (:version):**
 ```python
 {
     "ok": True,
     "data": {
-        "type": "result",
+        "type": "version",
         "result": {
             "parsed_data": [...],
             "parse_success": True,
             "platform": "cisco_ios",
             "raw_output": "...",
-            "elapsed_seconds": 0.234
+            "elapsed_seconds": 0.502,
+            "command_type": "version",
+            "version_info": {
+                "version": "15.2(4.0.55)E",
+                "hardware": "IOSv",
+                "serial": "9J0PD0QB9W1",
+                "uptime": "1 week, 4 days, 7 minutes"
+            }
         }
     },
-    "ts": "2025-01-14T10:30:00"
+    "ts": "2026-01-15T10:30:00"
+}
+```
+
+**Neighbors result example:**
+```python
+{
+    "ok": True,
+    "data": {
+        "type": "neighbors",
+        "result": {
+            "parsed_data": [...],
+            "neighbor_info": [
+                {
+                    "local_interface": "Gi0/0",
+                    "neighbor_device": "usa-spine-2.lab.local",
+                    "neighbor_interface": "Ethernet1",
+                    "platform": "Arista vEOS"
+                },
+                ...
+            ],
+            "elapsed_seconds": 0.456
+        }
+    }
 }
 ```
 
@@ -511,11 +616,7 @@ repl = NTermREPL(api=api, policy=strict_policy)
 ⚠️  WARNING: Database file is empty (0 bytes)!
 ```
 
-**Fix:**
-```python
-from nterm.scripting import api
-api.download_templates()
-```
+**Fix:** Download templates via **Dev → Download NTC Templates...**
 
 ### Wrong Platform Detected
 
@@ -542,11 +643,23 @@ api.download_templates()
 ```
 # Check current policy
 nterm> :policy
-Policy mode: read_only
+Policy mode: 🔒 read_only
 
 # Switch to ops mode (if needed and authorized)
 nterm> :policy ops
-Policy mode: ops
+Policy mode: ⚡ ops
+```
+
+### Quick Command Not Available
+
+**Symptom:** `Error: Command 'X' not available for platform 'Y'`
+
+**Cause:** Platform doesn't support that command type (e.g., CDP on Arista)
+
+**Solution:** Use the raw command directly or try alternative:
+```
+# Instead of :neighbors (which might try CDP first)
+📊 device> show lldp neighbors detail
 ```
 
 ### Connection Issues
@@ -563,6 +676,9 @@ nterm> :creds
 
 # Try explicit credential
 nterm> :connect device --cred specific_cred
+
+# Enable debug mode
+nterm> :connect device --debug
 ```
 
 ### Rich Format Not Working
@@ -576,102 +692,86 @@ pip install rich
 
 ## Examples
 
-### Example 1: Multi-Device Health Check
+### Example 1: Quick Health Check Across Devices
+
+```
+nterm> :unlock
+nterm> :format rich
+
+nterm> :connect usa-spine-1
+📊 usa-spine-1> :version
+📊 usa-spine-1> :bgp
+📊 usa-spine-1> :disconnect
+
+nterm> :connect usa-spine-2
+📊 usa-spine-2> :version
+📊 usa-spine-2> :bgp
+📊 usa-spine-2> :disconnect
+```
+
+### Example 2: Topology Discovery
+
+```
+nterm> :connect core-router
+📊 core-router> :neighbors
+[See all directly connected devices]
+
+📊 core-router> :routes
+[See routing table]
+
+📊 core-router> :bgp
+[See BGP peering status]
+```
+
+### Example 3: Programmatic Multi-Device Audit
 
 ```python
 from nterm.scripting.repl import NTermREPL
 from nterm.scripting import api
 
 repl = NTermREPL(api=api)
-repl.handle_line(":unlock")  # Password from secure store
-repl.handle_line(":format json")
+repl.do_unlock("password")
 
-devices = ["wan-core-1", "eng-spine-1", "usa-spine-1"]
-health_report = {}
+devices = ["spine-1", "spine-2", "leaf-1", "leaf-2"]
+audit_results = {}
 
 for device in devices:
-    # Connect
     result = repl.handle_line(f":connect {device}")
     if not result["ok"]:
-        health_report[device] = {"error": result["error"]}
+        audit_results[device] = {"error": result["error"]}
         continue
     
     # Get version info
-    version_result = repl.handle_line("show version")
-    version_data = version_result["data"]["result"]["parsed_data"][0]
+    ver_result = repl.handle_line(":version")
+    version_info = ver_result["data"]["result"]["version_info"]
     
-    # Get interface status
-    intf_result = repl.handle_line("show ip interface brief")
-    interfaces = intf_result["data"]["result"]["parsed_data"]
+    # Get neighbor count
+    nbr_result = repl.handle_line(":neighbors")
+    neighbor_info = nbr_result["data"]["result"].get("neighbor_info", [])
     
-    # Calculate health metrics
-    up_count = len([i for i in interfaces if i["STATUS"] == "up"])
-    total_count = len(interfaces)
-    
-    health_report[device] = {
-        "version": version_data.get("VERSION"),
-        "uptime": version_data.get("UPTIME"),
-        "interfaces_up": up_count,
-        "interfaces_total": total_count,
-        "health_percentage": (up_count / total_count) * 100
+    audit_results[device] = {
+        "version": version_info["version"],
+        "hardware": version_info["hardware"],
+        "uptime": version_info["uptime"],
+        "neighbor_count": len(neighbor_info),
     }
     
-    # Disconnect
     repl.handle_line(":disconnect")
 
-# Process report
+# Print audit report
 import json
-print(json.dumps(health_report, indent=2))
+print(json.dumps(audit_results, indent=2))
 ```
 
-### Example 2: Configuration Audit
-
-```python
-# Audit BGP configuration across devices
-repl.handle_line(":format json")
-
-devices = api.devices(pattern="*spine*")
-bgp_configs = {}
-
-for device in devices:
-    repl.handle_line(f":connect {device.name}")
-    
-    # Get BGP summary
-    result = repl.handle_line("show ip bgp summary")
-    if result["ok"] and result["data"]["result"]["parsed_data"]:
-        bgp_configs[device.name] = {
-            "neighbors": result["data"]["result"]["parsed_data"]
-        }
-    
-    repl.handle_line(":disconnect")
-
-# Generate audit report
-for device, config in bgp_configs.items():
-    neighbor_count = len(config["neighbors"])
-    print(f"{device}: {neighbor_count} BGP neighbors")
-```
-
-### Example 3: Interactive Exploration with Rich
-
-```python
-# Human-friendly interactive session
-api.repl()
-```
+### Example 4: Export Interface Data to JSON
 
 ```
-nterm> :unlock
-nterm> :format rich
-nterm> :connect eng-spine-1
+nterm> :connect distribution-1
+📊 distribution-1> :format json
+📊 distribution-1> :interfaces
 
-📊 eng-spine-1> show interfaces status
-[Beautiful Rich table with colors]
-
-📊 eng-spine-1> show cdp neighbors
-[Another formatted table]
-
-📊 eng-spine-1> :set_hint cisco_ios
-📊 eng-spine-1[cisco_ios]> show version
-[Version info in structured format]
+# Copy JSON output, save to file, process with jq:
+# cat interfaces.json | jq '.[] | select(.STATUS=="notconnect")'
 ```
 
 ## Architecture
@@ -682,32 +782,31 @@ nterm> :connect eng-spine-1
 ┌─────────────────────────────────────────────────┐
 │                   User/Agent                    │
 └───────────────────┬─────────────────────────────┘
-                    │
-                    │ Commands
+                    │ :commands / raw CLI
                     ▼
 ┌─────────────────────────────────────────────────┐
 │              NTermREPL                          │
 │  ┌──────────────────────────────────────────┐  │
 │  │  Command Router & State Manager          │  │
-│  │  - Parse commands                         │  │
+│  │  - Parse :commands                        │  │
+│  │  - Quick commands → platform_utils        │  │
 │  │  - Apply policy                           │  │
 │  │  - Manage session                         │  │
 │  └──────────────────────────────────────────┘  │
 └───────────────────┬─────────────────────────────┘
-                    │
                     │ API calls
                     ▼
 ┌─────────────────────────────────────────────────┐
 │               NTermAPI                          │
 │  ┌──────────────────────────────────────────┐  │
-│  │  Device Management                        │  │
-│  │  - Connection handling                    │  │
-│  │  - Command execution                      │  │
-│  │  - Credential management                  │  │
+│  │  Platform-Aware Execution                 │  │
+│  │  - send_platform_command()               │  │
+│  │  - send_first() for fallbacks            │  │
+│  │  - extract_version_info()                │  │
+│  │  - extract_neighbor_info()               │  │
 │  └──────────────────────────────────────────┘  │
 └───────────────────┬─────────────────────────────┘
-                    │
-                    │ SSH/NETCONF
+                    │ SSH
                     ▼
 ┌─────────────────────────────────────────────────┐
 │            Network Devices                      │
@@ -732,7 +831,7 @@ REPLState:
   └─ session: Optional[ActiveSession]
        ├─ device_name: str
        ├─ platform: str
-       ├─ client: SSHClient
+       ├─ prompt: str
        └─ is_connected: bool
 ```
 
@@ -743,22 +842,25 @@ REPLState:
    - Output format adapts to use case
    - Consistent behavior across contexts
 
-2. **Security First**
+2. **Platform Awareness**
+   - Quick commands auto-select correct syntax
+   - CDP/LLDP fallback handled automatically
+   - Version/neighbor info normalized across vendors
+
+3. **Security First**
    - Policy enforcement at REPL layer
    - Credential vault with secure unlock
    - Command filtering and validation
    - Session isolation
 
-3. **Observable Actions**
+4. **Observable Actions**
    - All commands visible
    - Debug mode for troubleshooting
    - Timestamped results
    - Clear error messages
 
-4. **Graceful Degradation**
+5. **Graceful Degradation**
    - Rich → text fallback
    - Parsed → raw fallback
    - Clear error handling
    - Informative health checks
-
-

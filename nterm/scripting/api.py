@@ -5,25 +5,27 @@ Scripting API for nterm - usable from IPython, CLI, or MCP tools.
 """
 
 from __future__ import annotations
-import re
-import time
 import fnmatch
-from typing import Optional, List, Dict, Any, Union
-from dataclasses import dataclass, asdict, field
-from datetime import datetime
+from contextlib import contextmanager
+from typing import Optional, List, Dict, Any, Generator
+from pathlib import Path
+import os
 
-import paramiko
-
-from ..manager.models import SessionStore, SavedSession, SessionFolder
+from ..manager.models import SessionStore
 from ..vault.resolver import CredentialResolver
-from ..vault.store import StoredCredential
-from ..connection.profile import ConnectionProfile, AuthMethod
 
-# Reuse SSHSession's algorithm configuration
-from ..session.ssh import (
-    _apply_global_transport_settings,
-    RSA_SHA1_DISABLED_ALGORITHMS,
+# Import our refactored modules
+from .models import ActiveSession, CommandResult, DeviceInfo, CredentialInfo
+from .platform_data import INTERFACE_DETAIL_FIELD_MAP
+from .platform_utils import (
+    detect_platform,
+    normalize_fields,
+    get_paging_disable_command,
+    get_platform_command,
+    extract_version_info,
+    extract_neighbor_info,
 )
+from .ssh_connection import connect_ssh, send_command
 
 # TextFSM parsing - REQUIRED
 try:
@@ -33,336 +35,6 @@ except ImportError as e:
     TFSM_AVAILABLE = False
     TextFSMAutoEngine = None
     _TFSM_IMPORT_ERROR = str(e)
-
-
-# =============================================================================
-# Platform Detection
-# =============================================================================
-
-PLATFORM_PATTERNS = {
-    'arista_eos': [
-        r'Arista',
-        r'vEOS',
-    ],
-    'cisco_ios': [
-        r'Cisco IOS Software',
-        r'IOS \(tm\)',
-    ],
-    'cisco_nxos': [
-        r'Cisco Nexus',
-        r'NX-OS',
-    ],
-    'cisco_iosxe': [
-        r'Cisco IOS XE Software',
-    ],
-    'cisco_iosxr': [
-        r'Cisco IOS XR Software',
-    ],
-    'juniper_junos': [
-        r'JUNOS',
-        r'Juniper Networks',
-    ],
-}
-
-
-# =============================================================================
-# Platform-specific command mappings
-# =============================================================================
-
-PLATFORM_COMMANDS = {
-    'arista_eos': {
-        'interfaces_status': 'show interfaces status',
-        'interface_detail': 'show interfaces {name}',
-    },
-    'cisco_ios': {
-        'interfaces_status': 'show interfaces status',
-        'interface_detail': 'show interfaces {name}',
-    },
-    'cisco_nxos': {
-        'interfaces_status': 'show interface status',
-        'interface_detail': 'show interface {name}',
-    },
-    'juniper_junos': {
-        'interfaces_status': 'show interfaces terse',
-        'interface_detail': 'show interfaces {name} extensive',
-    },
-}
-
-DEFAULT_COMMANDS = {
-    'interfaces_status': 'show interfaces status',
-    'interface_detail': 'show interfaces {name}',
-}
-
-
-# =============================================================================
-# Vendor Field Mappings for output normalization
-# =============================================================================
-
-# Maps canonical field names to vendor-specific template field names
-INTERFACE_DETAIL_FIELD_MAP = {
-    'arista_eos': {
-        'interface': ['INTERFACE'],
-        'admin_state': ['LINK_STATUS'],
-        'oper_state': ['PROTOCOL_STATUS'],
-        'hardware': ['HARDWARE_TYPE'],
-        'mac_address': ['MAC_ADDRESS'],
-        'description': ['DESCRIPTION'],
-        'mtu': ['MTU'],
-        'bandwidth': ['BANDWIDTH'],
-        'in_packets': ['INPUT_PACKETS'],
-        'out_packets': ['OUTPUT_PACKETS'],
-        'in_errors': ['INPUT_ERRORS'],
-        'out_errors': ['OUTPUT_ERRORS'],
-        'crc_errors': ['CRC'],
-    },
-    'cisco_ios': {
-        'interface': ['INTERFACE'],
-        'admin_state': ['LINK_STATUS'],
-        'oper_state': ['PROTOCOL_STATUS'],
-        'hardware': ['HARDWARE_TYPE'],
-        'mac_address': ['MAC_ADDRESS'],
-        'description': ['DESCRIPTION'],
-        'mtu': ['MTU'],
-        'bandwidth': ['BANDWIDTH'],
-        'duplex': ['DUPLEX'],
-        'speed': ['SPEED'],
-        'in_packets': ['INPUT_PACKETS'],
-        'out_packets': ['OUTPUT_PACKETS'],
-        'in_errors': ['INPUT_ERRORS'],
-        'out_errors': ['OUTPUT_ERRORS'],
-        'crc_errors': ['CRC'],
-    },
-    'cisco_nxos': {
-        'interface': ['INTERFACE'],
-        'admin_state': ['ADMIN_STATE', 'LINK_STATUS'],
-        'oper_state': ['OPER_STATE', 'PROTOCOL_STATUS'],
-        'hardware': ['HARDWARE_TYPE'],
-        'mac_address': ['MAC_ADDRESS', 'ADDRESS'],
-        'description': ['DESCRIPTION'],
-        'mtu': ['MTU'],
-        'bandwidth': ['BANDWIDTH', 'BW'],
-        'in_packets': ['IN_PKTS', 'INPUT_PACKETS'],
-        'out_packets': ['OUT_PKTS', 'OUTPUT_PACKETS'],
-        'in_errors': ['IN_ERRORS', 'INPUT_ERRORS'],
-        'out_errors': ['OUT_ERRORS', 'OUTPUT_ERRORS'],
-        'crc_errors': ['CRC', 'CRC_ERRORS'],
-    },
-    'juniper_junos': {
-        'interface': ['INTERFACE'],
-        'admin_state': ['ADMIN_STATE'],
-        'oper_state': ['LINK_STATUS'],
-        'hardware': ['HARDWARE_TYPE'],
-        'mac_address': ['MAC_ADDRESS'],
-        'description': ['DESCRIPTION'],
-        'mtu': ['MTU'],
-        'bandwidth': ['BANDWIDTH'],
-        'in_packets': ['INPUT_PACKETS'],
-        'out_packets': ['OUTPUT_PACKETS'],
-        'in_errors': ['INPUT_ERRORS'],
-        'out_errors': ['OUTPUT_ERRORS'],
-        'crc_errors': ['CRC'],
-    },
-}
-
-DEFAULT_FIELD_MAP = {
-    'interface': ['INTERFACE', 'PORT', 'NAME'],
-    'admin_state': ['ADMIN_STATE', 'LINK_STATUS', 'STATUS'],
-    'oper_state': ['OPER_STATE', 'PROTOCOL_STATUS', 'LINE_STATUS'],
-    'hardware': ['HARDWARE_TYPE', 'HARDWARE', 'MEDIA_TYPE', 'TYPE'],
-    'mac_address': ['MAC_ADDRESS', 'ADDRESS', 'MAC'],
-    'description': ['DESCRIPTION', 'NAME', 'DESC'],
-    'mtu': ['MTU'],
-    'bandwidth': ['BANDWIDTH', 'BW', 'SPEED'],
-    'duplex': ['DUPLEX'],
-    'speed': ['SPEED'],
-    'in_packets': ['INPUT_PACKETS', 'IN_PKTS', 'IN_PACKETS'],
-    'out_packets': ['OUTPUT_PACKETS', 'OUT_PKTS', 'OUT_PACKETS'],
-    'in_errors': ['INPUT_ERRORS', 'IN_ERRORS'],
-    'out_errors': ['OUTPUT_ERRORS', 'OUT_ERRORS'],
-    'crc_errors': ['CRC', 'CRC_ERRORS'],
-}
-
-
-@dataclass
-class ActiveSession:
-    """Represents an active SSH connection to a device."""
-    device_name: str
-    hostname: str
-    port: int
-    platform: Optional[str] = None
-    client: Optional[paramiko.SSHClient] = None
-    shell: Optional[paramiko.Channel] = None
-    prompt: Optional[str] = None
-    connected_at: datetime = field(default_factory=datetime.now)
-
-    def is_connected(self) -> bool:
-        """Check if session is still active."""
-        return self.client is not None and self.shell is not None and self.shell.active
-
-    def __repr__(self) -> str:
-        status = "connected" if self.is_connected() else "disconnected"
-        platform = f", platform={self.platform}" if self.platform else ""
-        return f"<ActiveSession {self.device_name}@{self.hostname}:{self.port} {status}{platform}>"
-
-    def __str__(self) -> str:
-        """Detailed string representation."""
-        lines = [
-            f"Active Session: {self.device_name}",
-            f"  Host: {self.hostname}:{self.port}",
-            f"  Status: {'connected' if self.is_connected() else 'disconnected'}",
-        ]
-        if self.platform:
-            lines.append(f"  Platform: {self.platform}")
-        if self.prompt:
-            lines.append(f"  Prompt: {self.prompt}")
-        lines.append(f"  Connected at: {self.connected_at.strftime('%Y-%m-%d %H:%M:%S')}")
-        return '\n'.join(lines)
-
-
-@dataclass
-class CommandResult:
-    """Result of executing a command on a device."""
-    command: str
-    raw_output: str
-    platform: Optional[str] = None
-    parsed_data: Optional[List[Dict[str, Any]]] = None
-    parse_success: bool = False
-    parse_template: Optional[str] = None
-    normalized_fields: Optional[Dict[str, str]] = None
-    timestamp: datetime = field(default_factory=datetime.now)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            'command': self.command,
-            'raw_output': self.raw_output,
-            'platform': self.platform,
-            'parsed_data': self.parsed_data,
-            'parse_success': self.parse_success,
-            'parse_template': self.parse_template,
-            'normalized_fields': self.normalized_fields,
-            'timestamp': self.timestamp.isoformat(),
-        }
-
-    def __repr__(self) -> str:
-        parsed = f", {len(self.parsed_data)} parsed" if self.parsed_data else ""
-        platform = f", platform={self.platform}" if self.platform else ""
-        return f"<CommandResult '{self.command}'{platform}{parsed}>"
-
-    def __str__(self) -> str:
-        """Detailed string representation."""
-        lines = [
-            f"Command: {self.command}",
-            f"Timestamp: {self.timestamp.strftime('%Y-%m-%d %H:%M:%S')}",
-        ]
-        if self.platform:
-            lines.append(f"Platform: {self.platform}")
-
-        lines.append(f"Parse success: {self.parse_success}")
-        if self.parse_template:
-            lines.append(f"Template: {self.parse_template}")
-
-        if self.parsed_data:
-            lines.append(f"Parsed rows: {len(self.parsed_data)}")
-            if self.normalized_fields:
-                lines.append(f"Field normalization: {self.normalized_fields['map_used']}")
-
-        lines.append(f"\nRaw output ({len(self.raw_output)} chars):")
-        lines.append("-" * 60)
-        lines.append(self.raw_output[:500] + ("..." if len(self.raw_output) > 500 else ""))
-
-        return '\n'.join(lines)
-
-
-@dataclass
-class DeviceInfo:
-    """Simplified device view for scripting."""
-    name: str
-    hostname: str
-    port: int
-    folder: Optional[str] = None
-    credential: Optional[str] = None
-    last_connected: Optional[str] = None
-    connect_count: int = 0
-
-    @classmethod
-    def from_session(cls, session: SavedSession, folder_name: str = None) -> 'DeviceInfo':
-        return cls(
-            name=session.name,
-            hostname=session.hostname,
-            port=session.port,
-            folder=folder_name,
-            credential=session.credential_name,
-            last_connected=str(session.last_connected) if session.last_connected else None,
-            connect_count=session.connect_count,
-        )
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-    def __repr__(self) -> str:
-        cred = f", cred={self.credential}" if self.credential else ""
-        folder = f", folder={self.folder}" if self.folder else ""
-        return f"Device({self.name}, {self.hostname}:{self.port}{cred}{folder})"
-
-    def __str__(self) -> str:
-        """Detailed string representation."""
-        lines = [
-            f"Device: {self.name}",
-            f"  Hostname: {self.hostname}:{self.port}",
-        ]
-        if self.folder:
-            lines.append(f"  Folder: {self.folder}")
-        if self.credential:
-            lines.append(f"  Credential: {self.credential}")
-        if self.last_connected:
-            lines.append(f"  Last connected: {self.last_connected}")
-        if self.connect_count > 0:
-            lines.append(f"  Connection count: {self.connect_count}")
-        return '\n'.join(lines)
-
-
-@dataclass
-class CredentialInfo:
-    """Simplified credential view for scripting (no secrets exposed)."""
-    name: str
-    username: str
-    has_password: bool
-    has_key: bool
-    match_hosts: List[str]
-    match_tags: List[str]
-    jump_host: Optional[str] = None
-    is_default: bool = False
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-    def __repr__(self) -> str:
-        auth = []
-        if self.has_password:
-            auth.append("password")
-        if self.has_key:
-            auth.append("key")
-        auth_str = "+".join(auth) if auth else "none"
-        default = " [default]" if self.is_default else ""
-        return f"Credential({self.name}, user={self.username}, auth={auth_str}{default})"
-
-    def __str__(self) -> str:
-        """Detailed string representation."""
-        lines = [
-            f"Credential: {self.name}",
-            f"  Username: {self.username}",
-            f"  Authentication: {'password' if self.has_password else ''}{'+' if self.has_password and self.has_key else ''}{'SSH key' if self.has_key else ''}",
-        ]
-        if self.match_hosts:
-            lines.append(f"  Host patterns: {', '.join(self.match_hosts)}")
-        if self.match_tags:
-            lines.append(f"  Tags: {', '.join(self.match_tags)}")
-        if self.jump_host:
-            lines.append(f"  Jump host: {self.jump_host}")
-        if self.is_default:
-            lines.append(f"  [DEFAULT]")
-        return '\n'.join(lines)
 
 
 class NTermAPI:
@@ -384,9 +56,13 @@ class NTermAPI:
         api.credentials()
         api.credential("lab-admin")
 
-        # Connect and execute (future)
+        # Connect and execute
         session = api.connect("eng-leaf-1")
         output = api.send(session, "show version")
+
+        # Context manager (auto-cleanup)
+        with api.session("eng-leaf-1") as s:
+            result = api.send(s, "show version")
     """
 
     def __init__(
@@ -658,183 +334,6 @@ class NTermAPI:
     # Connection operations
     # -------------------------------------------------------------------------
 
-    def _detect_platform(self, version_output: str) -> Optional[str]:
-        """Detect device platform from 'show version' output."""
-        for platform, patterns in PLATFORM_PATTERNS.items():
-            for pattern in patterns:
-                if re.search(pattern, version_output, re.IGNORECASE):
-                    return platform
-        return None
-
-    def _normalize_fields(
-        self,
-        parsed_data: List[Dict[str, Any]],
-        platform: str,
-        field_map_dict: Dict[str, Dict[str, List[str]]],
-    ) -> List[Dict[str, Any]]:
-        """
-        Normalize vendor-specific field names to canonical names.
-
-        Args:
-            parsed_data: Raw parsed data from TextFSM
-            platform: Detected platform
-            field_map_dict: Mapping dict (e.g., INTERFACE_DETAIL_FIELD_MAP)
-
-        Returns:
-            List of dicts with normalized field names
-        """
-        field_map = field_map_dict.get(platform, DEFAULT_FIELD_MAP)
-        normalized = []
-
-        for row in parsed_data:
-            norm_row = {}
-            for canonical_name, vendor_names in field_map.items():
-                for vendor_name in vendor_names:
-                    if vendor_name in row:
-                        norm_row[canonical_name] = row[vendor_name]
-                        break
-            # Keep any fields that weren't in the mapping
-            for key, value in row.items():
-                if key not in [vn for vnames in field_map.values() for vn in vnames]:
-                    norm_row[key] = value
-            normalized.append(norm_row)
-
-        return normalized
-
-    def _wait_for_prompt(
-        self,
-        shell: paramiko.Channel,
-        timeout: int = 10,
-        initial_wait: float = 0.5,
-    ) -> str:
-        """
-        Wait for device prompt and return detected prompt pattern.
-
-        Returns:
-            Detected prompt string
-        """
-        time.sleep(initial_wait)
-
-        # Send newline to trigger prompt
-        shell.send('\n')
-        time.sleep(0.3)
-
-        output = ""
-        end_time = time.time() + timeout
-
-        while time.time() < end_time:
-            if shell.recv_ready():
-                chunk = shell.recv(4096).decode('utf-8', errors='ignore')
-                output += chunk
-                time.sleep(0.1)
-            else:
-                break
-
-        # Extract last line as prompt (after last newline)
-        lines = output.strip().split('\n')
-        prompt = lines[-1] if lines else ""
-
-        # Common prompt patterns: ends with #, >, $
-        if prompt and prompt[-1] in '#>$':
-            return prompt
-
-        return prompt
-
-    def _send_command(
-        self,
-        shell: paramiko.Channel,
-        command: str,
-        prompt: str,
-        timeout: int = 30,
-    ) -> str:
-        """
-        Send command and collect output until prompt returns.
-
-        Args:
-            shell: Active SSH channel
-            command: Command to execute
-            prompt: Expected prompt pattern
-            timeout: Command timeout in seconds
-
-        Returns:
-            Command output (without echoed command and prompt)
-        """
-        # Clear any pending input aggressively
-        time.sleep(0.1)
-        while shell.recv_ready():
-            shell.recv(65536)
-            time.sleep(0.05)
-
-        # Send command - strip whitespace to avoid issues
-        command = command.strip()
-        shell.send(command + '\n')
-        time.sleep(0.3)  # Give device time to echo command
-
-        output = ""
-        end_time = time.time() + timeout
-        prompt_seen = False
-
-        # Paging prompts to handle (--More--, -- More --, etc.)
-        paging_prompts = [
-            '--More--',
-            '-- More --',
-            '<--- More --->',
-            'Press any key to continue',
-        ]
-
-        while time.time() < end_time:
-            if shell.recv_ready():
-                chunk = shell.recv(65536).decode('utf-8', errors='ignore')
-                output += chunk
-
-                # Check for paging prompt
-                for paging_prompt in paging_prompts:
-                    if paging_prompt in output:
-                        # Send space to continue
-                        shell.send(' ')
-                        time.sleep(0.2)
-                        # Remove paging prompt from output
-                        output = output.replace(paging_prompt, '')
-                        break
-
-                # Check if we've received the final prompt
-                if prompt in output:
-                    prompt_seen = True
-                    # Give a bit more time for any trailing data
-                    time.sleep(0.1)
-                    if shell.recv_ready():
-                        chunk = shell.recv(65536).decode('utf-8', errors='ignore')
-                        output += chunk
-                    break
-
-                time.sleep(0.1)
-            else:
-                if prompt_seen or len(output) > 0:
-                    time.sleep(0.3)
-                    if not shell.recv_ready():
-                        break
-
-        # Clean up output: remove echoed command and prompt
-        lines = output.split('\n')
-
-        # Remove first line if it contains the echoed command
-        if lines and command.lower() in lines[0].lower():
-            lines = lines[1:]
-
-        # Remove last line if it's the prompt
-        if lines and prompt in lines[-1]:
-            lines = lines[:-1]
-
-        # Also remove any lines that are just the prompt or empty
-        cleaned_lines = []
-        for line in lines:
-            stripped = line.strip('\r\n ')
-            # Skip prompt lines and residual paging artifacts
-            if stripped and stripped != prompt and not any(p in stripped for p in paging_prompts):
-                cleaned_lines.append(line)
-
-        return '\n'.join(cleaned_lines).strip()
-
     def connect(self, device: str, credential: str = None, debug: bool = False) -> ActiveSession:
         """
         Connect to a device and detect platform.
@@ -847,13 +346,6 @@ class NTermAPI:
         Returns:
             ActiveSession handle for sending commands
         """
-        debug_log = []
-
-        def _debug(msg):
-            if debug:
-                debug_log.append(msg)
-                print(f"[DEBUG] {msg}")
-
         # Look up device from saved sessions first
         device_info = self.device(device)
 
@@ -868,14 +360,11 @@ class NTermAPI:
             device_name = device
             saved_cred = None
 
-        _debug(f"Target: {hostname}:{port}")
-
         # Resolve credentials
         if not self.vault_unlocked:
             raise RuntimeError("Vault is locked. Call api.unlock(password) first.")
 
         cred_name = credential or saved_cred
-        _debug(f"Credential: {cred_name or '(auto-resolve)'}")
 
         if cred_name:
             try:
@@ -895,134 +384,10 @@ class NTermAPI:
         if not profile:
             raise ValueError(f"No credentials available for {hostname}")
 
-        # Apply legacy algorithm support
-        _apply_global_transport_settings()
+        # Establish SSH connection using our refactored module
+        client, shell, prompt, debug_log = connect_ssh(hostname, port, profile, debug)
 
-        # Prepare connection kwargs
-        connect_kwargs = {
-            'hostname': hostname,
-            'port': port,
-            'timeout': 10,
-            'allow_agent': False,
-            'look_for_keys': False,
-        }
-
-        # Add authentication from profile
-        auth_method_used = None
-        if profile.auth_methods:
-            first_auth = profile.auth_methods[0]
-            connect_kwargs['username'] = first_auth.username
-            _debug(f"Username: {first_auth.username}")
-
-            for auth in profile.auth_methods:
-                if auth.method == AuthMethod.PASSWORD:
-                    connect_kwargs['password'] = auth.password
-                    auth_method_used = "password"
-                    _debug("Auth method: password")
-                    break
-                elif auth.method == AuthMethod.KEY_FILE:
-                    connect_kwargs['key_filename'] = auth.key_path
-                    if auth.key_passphrase:
-                        connect_kwargs['passphrase'] = auth.key_passphrase
-                    auth_method_used = f"key_file:{auth.key_path}"
-                    _debug(f"Auth method: key_file ({auth.key_path})")
-                    break
-                elif auth.method == AuthMethod.KEY_STORED:
-                    import tempfile
-                    key_file = tempfile.NamedTemporaryFile(
-                        mode='w',
-                        delete=False,
-                        suffix='.pem'
-                    )
-                    key_file.write(auth.key_data)
-                    key_file.close()
-                    connect_kwargs['key_filename'] = key_file.name
-                    if auth.key_passphrase:
-                        connect_kwargs['passphrase'] = auth.key_passphrase
-                    auth_method_used = "key_stored"
-                    _debug(f"Auth method: key_stored (temp: {key_file.name})")
-                    break
-
-        # Detect key type if using key auth
-        if 'key_filename' in connect_kwargs:
-            key_path = connect_kwargs['key_filename']
-            key_type = "unknown"
-            key_bits = None
-            try:
-                key = paramiko.RSAKey.from_private_key_file(key_path)
-                key_type = "RSA"
-                key_bits = key.get_bits()
-            except:
-                try:
-                    key = paramiko.Ed25519Key.from_private_key_file(key_path)
-                    key_type = "Ed25519"
-                except:
-                    try:
-                        key = paramiko.ECDSAKey.from_private_key_file(key_path)
-                        key_type = "ECDSA"
-                    except:
-                        pass
-            _debug(f"Key type: {key_type}" + (f" ({key_bits} bits)" if key_bits else ""))
-
-        # Connection attempt sequence
-        attempts = [
-            ("modern", None),
-            ("rsa-sha1", RSA_SHA1_DISABLED_ALGORITHMS),
-        ]
-
-        last_error = None
-        connected = False
-        client = None
-
-        for attempt_name, disabled_algs in attempts:
-            client = paramiko.SSHClient()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-            _debug(f"Attempt: {attempt_name}")
-
-            attempt_kwargs = connect_kwargs.copy()
-            if disabled_algs:
-                attempt_kwargs['disabled_algorithms'] = disabled_algs
-                _debug(f"  disabled_algorithms: {disabled_algs}")
-
-            try:
-                client.connect(**attempt_kwargs)
-                connected = True
-
-                # Log successful negotiation
-                transport = client.get_transport()
-                if transport:
-                    _debug(f"  SUCCESS - cipher: {transport.remote_cipher}, mac: {transport.remote_mac}")
-                    _debug(f"  host_key_type: {transport.host_key_type}")
-                break
-
-            except paramiko.AuthenticationException as e:
-                _debug(f"  FAILED (auth): {e}")
-                last_error = str(e)
-                client.close()
-            except paramiko.SSHException as e:
-                _debug(f"  FAILED (ssh): {e}")
-                last_error = str(e)
-                client.close()
-            except Exception as e:
-                _debug(f"  FAILED (other): {e}")
-                last_error = str(e)
-                client.close()
-
-        if not connected:
-            # Build detailed error message
-            error_detail = f"Connection failed: {last_error}"
-            if debug:
-                error_detail += f"\n\nDebug log:\n" + "\n".join(debug_log)
-            raise paramiko.AuthenticationException(error_detail)
-
-        # Open interactive shell
-        shell = client.invoke_shell(width=200, height=50)
-        shell.settimeout(0.5)
-
-        prompt = self._wait_for_prompt(shell)
-        _debug(f"Prompt detected: {prompt}")
-
+        # Create session object
         session = ActiveSession(
             device_name=device_name,
             hostname=hostname,
@@ -1034,32 +399,77 @@ class NTermAPI:
 
         # Detect platform
         try:
-            version_output = self._send_command(shell, "show version", prompt)
-            platform = self._detect_platform(version_output)
+            version_output = send_command(shell, "show version", prompt)
+            platform = detect_platform(version_output)
             session.platform = platform
-            _debug(f"Platform detected: {platform}")
+            if debug:
+                print(f"[DEBUG] Platform detected: {platform}")
         except Exception as e:
-            _debug(f"Platform detection failed: {e}")
+            if debug:
+                print(f"[DEBUG] Platform detection failed: {e}")
 
         # Disable terminal paging
-        try:
-            if session.platform and 'cisco' in session.platform:
-                self._send_command(shell, "terminal length 0", prompt, timeout=5)
-            elif session.platform == 'juniper_junos':
-                self._send_command(shell, "set cli screen-length 0", prompt, timeout=5)
-            elif session.platform == 'arista_eos':
-                self._send_command(shell, "terminal length 0", prompt, timeout=5)
-        except Exception as e:
-            _debug(f"Failed to disable paging: {e}")
+        paging_cmd = get_paging_disable_command(session.platform)
+        if paging_cmd:
+            try:
+                send_command(shell, paging_cmd, prompt, timeout=5)
+            except Exception as e:
+                if debug:
+                    print(f"[DEBUG] Failed to disable paging: {e}")
 
         self._active_sessions[device_name] = session
         return session
+
+    @contextmanager
+    def session(self, device: str, credential: str = None, debug: bool = False) -> Generator[ActiveSession, None, None]:
+        """
+        Context manager for device sessions with automatic cleanup.
+
+        Args:
+            device: Device name (from saved sessions) or hostname
+            credential: Optional credential name (auto-resolved if not specified)
+            debug: Enable verbose connection debugging
+
+        Yields:
+            ActiveSession handle for sending commands
+
+        Raises:
+            ConnectionError: If connection fails
+
+        Example:
+            # Old way (12 lines):
+            session = None
+            try:
+                session = api.connect(device.name)
+                if not session.is_connected():
+                    continue
+                result = api.send(session, "show version")
+            finally:
+                if session and session.is_connected():
+                    api.disconnect(session)
+
+            # New way (3 lines):
+            with api.session(device.name) as s:
+                result = api.send(s, "show version")
+        """
+        sess = None
+        try:
+            sess = self.connect(device, credential=credential, debug=debug)
+            if not sess.is_connected():
+                raise ConnectionError(f"Failed to connect to {device}")
+            yield sess
+        finally:
+            if sess and sess.is_connected():
+                try:
+                    self.disconnect(sess)
+                except Exception:
+                    pass  # Best effort cleanup
 
     def send(
         self,
         session: ActiveSession,
         command: str,
-        timeout: int = 30,
+        timeout: int = 60,
         parse: bool = True,
         normalize: bool = True,
     ) -> CommandResult:
@@ -1089,8 +499,8 @@ class NTermAPI:
         if not session.is_connected():
             raise RuntimeError(f"Session {session.device_name} is not connected")
 
-        # Execute command
-        raw_output = self._send_command(session.shell, command, session.prompt, timeout)
+        # Execute command using our refactored module
+        raw_output = send_command(session.shell, command, session.prompt, timeout)
 
         # Create result object
         result = CommandResult(
@@ -1130,7 +540,7 @@ class NTermAPI:
                         if normalize and parsed_data:
                             # Determine which field map to use based on command
                             if 'interface' in command.lower():
-                                normalized = self._normalize_fields(
+                                normalized = normalize_fields(
                                     parsed_data,
                                     session.platform,
                                     INTERFACE_DETAIL_FIELD_MAP,
@@ -1150,6 +560,96 @@ class NTermAPI:
 
         return result
 
+    def send_first(
+        self,
+        session: ActiveSession,
+        commands: List[str],
+        parse: bool = True,
+        timeout: int = 30,
+        require_parsed: bool = True,
+    ) -> Optional[CommandResult]:
+        """
+        Try multiple commands until one succeeds (returns parsed data).
+
+        Useful for CDP/LLDP discovery, platform variations, etc.
+
+        Args:
+            session: Active session
+            commands: List of commands to try in order
+            parse: Whether to parse output
+            timeout: Command timeout
+            require_parsed: If True, only consider success if parsed_data is non-empty
+
+        Returns:
+            First successful CommandResult, or None if all failed
+
+        Example:
+            # Try CDP first, fall back to LLDP
+            result = api.send_first(session, [
+                "show cdp neighbors detail",
+                "show lldp neighbors detail",
+            ])
+
+            # Platform-agnostic config fetch
+            result = api.send_first(session, [
+                "show running-config",
+                "show configuration",
+            ], parse=False, require_parsed=False)
+        """
+        for cmd in commands:
+            if cmd is None:
+                continue
+            try:
+                result = self.send(session, cmd, parse=parse, timeout=timeout)
+
+                if require_parsed and parse:
+                    # Need non-empty parsed data
+                    if result.parsed_data:
+                        return result
+                else:
+                    # Just need non-empty raw output
+                    if result.raw_output and result.raw_output.strip():
+                        return result
+
+            except Exception:
+                continue  # Try next command
+
+        return None
+
+    def send_platform_command(
+        self,
+        session: ActiveSession,
+        command_type: str,
+        parse: bool = True,
+        timeout: int = 30,
+        **kwargs
+    ) -> Optional[CommandResult]:
+        """
+        Send a platform-appropriate command by type.
+
+        Args:
+            session: Active session
+            command_type: Command type (e.g., 'config', 'version', 'neighbors')
+            parse: Whether to parse output
+            timeout: Command timeout
+            **kwargs: Format arguments (e.g., name='Gi0/1' for interface_detail)
+
+        Returns:
+            CommandResult or None if command not available
+
+        Example:
+            # Get running config (platform-aware)
+            result = api.send_platform_command(session, 'config', parse=False)
+
+            # Get interface details
+            result = api.send_platform_command(session, 'interface_detail', name='Gi0/1')
+        """
+        cmd = get_platform_command(session.platform, command_type, **kwargs)
+        if not cmd:
+            return None
+
+        return self.send(session, cmd, parse=parse, timeout=timeout)
+
     def disconnect(self, session: ActiveSession) -> None:
         """
         Disconnect a session.
@@ -1166,14 +666,54 @@ class NTermAPI:
         if session.client:
             session.client.close()
 
-    def active_sessions(self) -> List[str]:
+    def disconnect_all(self) -> int:
         """
-        List currently active session names.
+        Disconnect all active sessions.
 
         Returns:
-            List of device names with active connections
+            Number of sessions disconnected
+
+        Example:
+            # Cleanup at end of script
+            count = api.disconnect_all()
+            print(f"Disconnected {count} session(s)")
         """
-        return list(self._active_sessions.keys())
+        count = 0
+        for session_id in list(self._active_sessions.keys()):
+            try:
+                session = self._active_sessions[session_id]
+                self.disconnect(session)
+                count += 1
+            except Exception:
+                pass
+        return count
+
+    def active_sessions(self) -> List[ActiveSession]:
+        """
+        Get list of currently active sessions.
+
+        Returns:
+            List of ActiveSession objects
+        """
+        # Clean up stale sessions
+        active = []
+        stale = []
+
+        for session_id, session in self._active_sessions.items():
+            if session.is_connected():
+                active.append(session)
+            else:
+                stale.append(session_id)
+
+        # Remove stale entries
+        for session_id in stale:
+            del self._active_sessions[session_id]
+
+        return active
+
+    # -------------------------------------------------------------------------
+    # Debug / diagnostic methods
+    # -------------------------------------------------------------------------
 
     def db_info(self) -> Dict[str, Any]:
         """
@@ -1182,9 +722,6 @@ class NTermAPI:
         Returns:
             Dict with database path, existence, and diagnostic info
         """
-        from pathlib import Path
-        import os
-
         info = {
             "engine_available": self._tfsm_engine is not None,
             "db_path": None,
@@ -1310,7 +847,6 @@ class NTermAPI:
         if self._tfsm_engine and hasattr(self._tfsm_engine, 'db_path'):
             parser_db_path = self._tfsm_engine.db_path
             if parser_db_path:
-                from pathlib import Path
                 parser_db_exists = Path(parser_db_path).exists()
 
         return {
@@ -1351,7 +887,21 @@ Connections:
   session = api.connect("device")  Connect to device (auto-detect platform)
   result = api.send(session, cmd)  Execute command (returns CommandResult)
   api.disconnect(session)          Close connection
+  api.disconnect_all()             Close all connections
   api.active_sessions()            List active connections
+
+Context Manager (recommended):
+  with api.session("device") as s:
+      result = api.send(s, "show version")
+  # Auto-disconnects when done
+
+Platform-Aware Commands:
+  api.send_platform_command(s, 'config')           Get running config
+  api.send_platform_command(s, 'neighbors')        Get CDP/LLDP neighbors
+  api.send_platform_command(s, 'interface_detail', name='Gi0/1')
+
+Try Multiple Commands:
+  api.send_first(s, ["show cdp neighbors", "show lldp neighbors"])
 
 Command Results:
   result.raw_output                Raw text from device
@@ -1370,18 +920,23 @@ Status:
   api._tfsm_engine                 TextFSM parser (required)
 
 Examples:
-  # Connect and execute
+  # Connect and execute (manual)
   api.unlock("vault-password")
   session = api.connect("spine1")
   result = api.send(session, "show interfaces status")
-  
-  # Access parsed data
-  if result.parsed_data:
-      for interface in result.parsed_data:
-          print(f"{interface['name']}: {interface['status']}")
-  
-  # Disconnect
   api.disconnect(session)
+  
+  # Connect and execute (context manager - recommended)
+  api.unlock("vault-password")
+  with api.session("spine1") as s:
+      result = api.send(s, "show interfaces status")
+      for intf in result.parsed_data:
+          print(f"{intf['name']}: {intf['status']}")
+  
+  # Platform-aware config backup
+  with api.session("router1") as s:
+      result = api.send_platform_command(s, 'config', parse=False)
+      Path("backup.cfg").write_text(result.raw_output)
 
 Note: TextFSM parser (tfsm_templates.db) is REQUIRED for the API to function.
 The API will fail during initialization if the database is not found.
@@ -1390,6 +945,7 @@ The API will fail during initialization if the database is not found.
 
 # Singleton for convenience in IPython
 _default_api: Optional[NTermAPI] = None
+
 
 def get_api() -> NTermAPI:
     """Get or create default API instance."""
